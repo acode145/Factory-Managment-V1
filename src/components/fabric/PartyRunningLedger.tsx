@@ -36,12 +36,23 @@ export default function PartyRunningLedger({
   const filteredEntries = entries.filter((e) => e.partyId === selectedPartyId);
   const currentParty = parties.find((p) => p.id === selectedPartyId);
 
-  const totalCredit = filteredEntries.reduce((acc, curr) => acc + Number(curr.creditMeters || 0), 0);
-  const totalDebit = filteredEntries.reduce((acc, curr) => acc + Number(curr.debitMeters || 0), 0);
+  // 1. Total Deposited: ONLY count true client deposits (PARTY_INWARD)
+  const totalPartyDeposited = filteredEntries
+    .filter((e) => e.movementType === "PARTY_INWARD")
+    .reduce((acc, curr) => acc + Number(curr.creditMeters || 0), 0);
+
+  // 2. Delivered to Party: ONLY count true customer dispatches (DELIVERY_TO_PARTY)
+  const totalPartyDelivered = filteredEntries
+    .filter((e) => e.movementType === "DELIVERY_TO_PARTY")
+    .reduce((acc, curr) => acc + Number(curr.debitMeters || 0), 0);
+
+  // 3. Total Shrinkage & Shortage: All dock shortages + technical process loss
   const totalShrinkage = filteredEntries.reduce(
     (acc, curr) => acc + Number(curr.shrinkageMeters || 0),
     0
   );
+
+  // 4. In Factory Custody: Latest running stock balance
   const currentBalance =
     filteredEntries.length > 0 ? Number(filteredEntries[0].runningBalance) : 0;
 
@@ -92,32 +103,35 @@ export default function PartyRunningLedger({
       {/* Summary KPI Cards for the Selected Party */}
       {currentParty && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+          {/* Card 1: Total Deposited by Party */}
           <div className="p-3.5 rounded-lg bg-zinc-50 border border-zinc-200">
             <div className="text-zinc-500 text-xs font-medium flex items-center gap-1">
               <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-600" />
               <span>Total Deposited</span>
             </div>
             <div className="mt-1 text-lg font-bold font-mono text-zinc-950">
-              +{totalCredit.toFixed(2)}m
+              +{totalPartyDeposited.toFixed(2)}m
             </div>
             <span className="text-[10px] text-zinc-400 font-mono">
-              ≈ {metersToYards(totalCredit).toFixed(1)} yds
+              ≈ {metersToYards(totalPartyDeposited).toFixed(1)} yds
             </span>
           </div>
 
+          {/* Card 2: Delivered to Party */}
           <div className="p-3.5 rounded-lg bg-zinc-50 border border-zinc-200">
             <div className="text-zinc-500 text-xs font-medium flex items-center gap-1">
               <ArrowUpRight className="w-3.5 h-3.5 text-blue-600" />
-              <span>Total Delivered</span>
+              <span>Delivered to Party</span>
             </div>
             <div className="mt-1 text-lg font-bold font-mono text-zinc-950">
-              -{totalDebit.toFixed(2)}m
+              -{totalPartyDelivered.toFixed(2)}m
             </div>
             <span className="text-[10px] text-zinc-400 font-mono">
-              ≈ {metersToYards(totalDebit).toFixed(1)} yds
+              ≈ {metersToYards(totalPartyDelivered).toFixed(1)} yds
             </span>
           </div>
 
+          {/* Card 3: Technical Shrinkage + Dock Shortage */}
           <div className="p-3.5 rounded-lg bg-zinc-50 border border-zinc-200">
             <div className="text-zinc-500 text-xs font-medium flex items-center gap-1">
               <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
@@ -131,6 +145,7 @@ export default function PartyRunningLedger({
             </span>
           </div>
 
+          {/* Card 4: Current In-Factory Stock Balance */}
           <div className="p-3.5 rounded-lg bg-emerald-50/70 border border-emerald-200">
             <div className="text-emerald-900 text-xs font-medium">In Factory Custody</div>
             <div className="mt-1 text-xl font-bold font-mono text-emerald-950">
@@ -143,7 +158,7 @@ export default function PartyRunningLedger({
         </div>
       )}
 
-      {/* MOBILE VIEW (< 768px): Chronological Cards */}
+      {/* MOBILE VIEW (< 768px): Chronological Cards with Dual Units */}
       <div className="block md:hidden space-y-3">
         {filteredEntries.length === 0 ? (
           <div className="py-8 text-center text-xs text-zinc-400 font-mono">
@@ -165,26 +180,44 @@ export default function PartyRunningLedger({
                 <div>
                   <span className="text-[10px] text-zinc-400 block uppercase">Change</span>
                   {Number(entry.creditMeters) > 0 && (
-                    <span className="text-emerald-700 font-bold">
-                      +{Number(entry.creditMeters).toFixed(2)}m
-                    </span>
+                    <div>
+                      <span className="text-emerald-700 font-bold">
+                        +{Number(entry.creditMeters).toFixed(2)}m
+                      </span>
+                      <span className="text-[10px] text-zinc-400 block">
+                        ≈ {metersToYards(Number(entry.creditMeters)).toFixed(1)} yds
+                      </span>
+                    </div>
                   )}
                   {Number(entry.debitMeters) > 0 && (
-                    <span className="text-blue-700 font-bold">
-                      -{Number(entry.debitMeters).toFixed(2)}m
-                    </span>
+                    <div>
+                      <span className="text-blue-700 font-bold">
+                        -{Number(entry.debitMeters).toFixed(2)}m
+                      </span>
+                      <span className="text-[10px] text-zinc-400 block">
+                        ≈ {metersToYards(Number(entry.debitMeters)).toFixed(1)} yds
+                      </span>
+                    </div>
                   )}
                   {Number(entry.shrinkageMeters) > 0 && (
-                    <span className="text-rose-700 font-bold">
-                      -{Number(entry.shrinkageMeters).toFixed(2)}m
-                    </span>
+                    <div>
+                      <span className="text-rose-700 font-bold">
+                        -{Number(entry.shrinkageMeters).toFixed(2)}m
+                      </span>
+                      <span className="text-[10px] text-zinc-400 block">
+                        ≈ {metersToYards(Number(entry.shrinkageMeters)).toFixed(1)} yds
+                      </span>
+                    </div>
                   )}
                 </div>
 
                 <div className="text-right">
-                  <span className="text-[10px] text-zinc-400 block uppercase">Balance</span>
+                  <span className="text-[10px] text-zinc-400 block uppercase">Running Stock</span>
                   <span className="font-bold text-zinc-950">
                     {Number(entry.runningBalance).toFixed(2)}m
+                  </span>
+                  <span className="text-[10px] text-zinc-500 block font-medium">
+                    ≈ {metersToYards(Number(entry.runningBalance)).toFixed(1)} yds
                   </span>
                 </div>
               </div>
@@ -193,7 +226,7 @@ export default function PartyRunningLedger({
         )}
       </div>
 
-      {/* DESKTOP VIEW (>= 768px): Tabular Ledger */}
+      {/* DESKTOP VIEW (>= 768px): Tabular Ledger with Dual Units in Every Column */}
       <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
@@ -202,7 +235,7 @@ export default function PartyRunningLedger({
               <th className="py-2.5 px-3">Reference #</th>
               <th className="py-2.5 px-3">Transaction Details</th>
               <th className="py-2.5 px-3 text-right">Inward (+)</th>
-              <th className="py-2.5 px-3 text-right">Delivery (-)</th>
+              <th className="py-2.5 px-3 text-right">Outward / Delivery (-)</th>
               <th className="py-2.5 px-3 text-right">Shrinkage / Shortage (-)</th>
               <th className="py-2.5 px-3 text-right">Running Stock</th>
             </tr>
@@ -223,24 +256,66 @@ export default function PartyRunningLedger({
                   <td className="py-2.5 px-3 font-bold text-zinc-900 whitespace-nowrap">
                     {entry.referenceNumber}
                   </td>
-                  <td className="py-2.5 px-3 font-sans text-zinc-700">{entry.notes}</td>
-                  <td className="py-2.5 px-3 text-right text-emerald-700 font-semibold whitespace-nowrap">
-                    {Number(entry.creditMeters) > 0
-                      ? `+${Number(entry.creditMeters).toFixed(2)}m`
-                      : "—"}
+                  <td className="py-2.5 px-3 font-sans text-zinc-700 max-w-sm">{entry.notes}</td>
+
+                  {/* INWARD (+) */}
+                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                    {Number(entry.creditMeters) > 0 ? (
+                      <div>
+                        <span className="text-emerald-700 font-semibold">
+                          +{Number(entry.creditMeters).toFixed(2)}m
+                        </span>
+                        <span className="block text-[10px] text-zinc-400">
+                          ≈ {metersToYards(Number(entry.creditMeters)).toFixed(1)} yds
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-300">—</span>
+                    )}
                   </td>
-                  <td className="py-2.5 px-3 text-right text-blue-700 font-semibold whitespace-nowrap">
-                    {Number(entry.debitMeters) > 0
-                      ? `-${Number(entry.debitMeters).toFixed(2)}m`
-                      : "—"}
+
+                  {/* OUTWARD / DELIVERY (-) */}
+                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                    {Number(entry.debitMeters) > 0 ? (
+                      <div>
+                        <span className="text-blue-700 font-semibold">
+                          -{Number(entry.debitMeters).toFixed(2)}m
+                        </span>
+                        <span className="block text-[10px] text-zinc-400">
+                          ≈ {metersToYards(Number(entry.debitMeters)).toFixed(1)} yds
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-300">—</span>
+                    )}
                   </td>
-                  <td className="py-2.5 px-3 text-right text-rose-700 font-semibold whitespace-nowrap">
-                    {Number(entry.shrinkageMeters) > 0
-                      ? `-${Number(entry.shrinkageMeters).toFixed(2)}m`
-                      : "—"}
+
+                  {/* SHRINKAGE / SHORTAGE (-) */}
+                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                    {Number(entry.shrinkageMeters) > 0 ? (
+                      <div>
+                        <span className="text-rose-700 font-semibold">
+                          -{Number(entry.shrinkageMeters).toFixed(2)}m
+                        </span>
+                        <span className="block text-[10px] text-zinc-400">
+                          ≈ {metersToYards(Number(entry.shrinkageMeters)).toFixed(1)} yds
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-300">—</span>
+                    )}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-bold text-zinc-950 whitespace-nowrap">
-                    {Number(entry.runningBalance).toFixed(2)}m
+
+                  {/* RUNNING STOCK */}
+                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                    <div>
+                      <span className="text-zinc-950 font-bold">
+                        {Number(entry.runningBalance).toFixed(2)}m
+                      </span>
+                      <span className="block text-[10px] text-zinc-500 font-medium">
+                        ≈ {metersToYards(Number(entry.runningBalance)).toFixed(1)} yds
+                      </span>
+                    </div>
                   </td>
                 </tr>
               ))
