@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String            @id @default(uuid())
+  fullName         String
+  username         String            @unique
+  password         String            // Stored visible/plain-accessible per admin requirement
+  role             String            @default("STOREKEEPER") // ADMIN, STOREKEEPER, FLOOR_SUPERVISOR, GATE_CLERK
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  inwardsCreated    FabricInward[]   @relation("UserInwards")
+  dispatchesCreated DeliveryChallan[] @relation("UserDispatches")
+  outsourceSent     OutsourceBatch[] @relation("SentByUser")
+  outsourceReceived OutsourceBatch[] @relation("ReceivedByUser")
+}
+
+model Party {
+  id               String            @id @default(uuid())
+  code             String            @unique // e.g. PRT-001
+  name             String
+  partyType        String            @default("REGULAR_CLIENT") // REGULAR_CLIENT, STOCKING_CONSIGNMENT, IN_HOUSE_LABEL
+  contactPerson    String?
+  phone            String?
+  address          String?
+  notes            String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  inwards          FabricInward[]
+  deliveries       DeliveryChallan[]
+  outsourceBatches OutsourceBatch[]
+  ledgerEntries    FabricLedgerEntry[]
+}
+
+model Vendor {
+  id               String            @id @default(uuid())
+  code             String            @unique // e.g. VND-001
+  name             String
+  defaultProcess   String            @default("SOLID_DYEING") // SOLID_DYEING, ROTARY_PRINTING, DIGITAL_PRINTING, WASHING
+  contactPerson    String?
+  phone            String?
+  address          String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+
+  outsourceBatches OutsourceBatch[]
+}
+
+model FabricInward {
+  id               String            @id @default(uuid())
+  igpNumber        String            @unique // IGP-2026-XXXX
+  partyId          String
+  party            Party             @relation(fields: [partyId], references: [id])
+  partyChallanNo   String
+  fabricType       String            // e.g. Lawn, Cambric, Chiffon
+  colorShade       String            // e.g. Greige/Raw, White, Black
+  rollCount        Int
+  challanMeters    Decimal           @db.Decimal(10, 2)
+  measuredMeters   Decimal           @db.Decimal(10, 2)
+  shortageMeters   Decimal           @db.Decimal(10, 2) // Auto: challanMeters - measuredMeters
+  driverDetails    String?
+  remarks          String?
+  receivedById     String
+  receivedBy       User              @relation("UserInwards", fields: [receivedById], references: [id])
+  createdAt        DateTime          @default(now())
+
+  outsourceBatches OutsourceBatch[]
+  deliveries       DeliveryChallanItem[]
+}
+
+model OutsourceBatch {
+  id               String            @id @default(uuid())
+  ogpNumber        String            @unique // OGP-2026-XXXX
+  partyId          String
+  party            Party             @relation(fields: [partyId], references: [id])
+  vendorId         String
+  vendor           Vendor            @relation(fields: [vendorId], references: [id])
+  inwardId         String?
+  inward           FabricInward?     @relation(fields: [inwardId], references: [id])
+  processType      String            @default("SOLID_DYEING")
+  targetShade      String
+  sentMeters       Decimal           @db.Decimal(10, 2)
+  sentDate         DateTime          @default(now())
+  sentById         String
+  sentBy           User              @relation("SentByUser", fields: [sentById], references: [id])
+
+  status           String            @default("WITH_VENDOR") // WITH_VENDOR, RECEIVED_COMPLETE, RECEIVED_PARTIAL
+  vendorChallanNo  String?
+  receivedMeters   Decimal?          @db.Decimal(10, 2)
+  shrinkageMeters  Decimal?          @db.Decimal(10, 2)
+  shrinkagePercent Decimal?          @db.Decimal(5, 2)
+  receivedDate     DateTime?
+  receivedById     String?
+  receivedBy       User?             @relation("ReceivedByUser", fields: [receivedById], references: [id])
+  remarks          String?
+}
+
+model DeliveryChallan {
+  id               String            @id @default(uuid())
+  challanNumber    String            @unique // DC-2026-XXXX
+  partyId          String
+  party            Party             @relation(fields: [partyId], references: [id])
+  dispatchDate     DateTime          @default(now())
+  totalMeters      Decimal           @db.Decimal(10, 2)
+  totalRolls       Int
+  vehicleDriver    String?
+  dispatchedById   String
+  dispatchedBy     User              @relation("UserDispatches", fields: [dispatchedById], references: [id])
+  remarks          String?
+  createdAt        DateTime          @default(now())
+
+  items            DeliveryChallanItem[]
+}
+
+model DeliveryChallanItem {
+  id               String            @id @default(uuid())
+  challanId        String
+  challan          DeliveryChallan   @relation(fields: [challanId], references: [id], onDelete: Cascade)
+  inwardId         String?
+  inward           FabricInward?     @relation(fields: [inwardId], references: [id])
+  fabricType       String
+  colorShade       String
+  metersDelivered  Decimal           @db.Decimal(10, 2)
+  rollsDelivered   Int
+}
+
+model FabricLedgerEntry {
+  id               String            @id @default(uuid())
+  partyId          String
+  party            Party             @relation(fields: [partyId], references: [id])
+  movementType     String            // PARTY_INWARD, OUTWARD_TO_VENDOR, INWARD_FROM_VENDOR, DELIVERY_TO_PARTY, ADJUSTMENT
+  referenceNumber  String            // IGP, OGP, or DC number
+  creditMeters     Decimal           @default(0) @db.Decimal(10, 2)
+  debitMeters      Decimal           @default(0) @db.Decimal(10, 2)
+  shrinkageMeters  Decimal           @default(0) @db.Decimal(10, 2)
+  runningBalance   Decimal           @db.Decimal(10, 2)
+  timestamp        DateTime          @default(now())
+  notes            String?
+}

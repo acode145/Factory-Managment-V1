@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f4f5; /* zinc-100 */
+  --foreground: #09090b; /* zinc-950 */
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --border: #e4e4e7; /* zinc-200 */
+  --muted: #71717a; /* zinc-500 */
+  --muted-bg: #f4f4f5; /* zinc-100 */
+  --primary: #18181b; /* zinc-900 */
+  --primary-foreground: #fafafa;
+  --accent: #2563eb; /* blue-600 */
+  --success-bg: #ecfdf5; /* emerald-50 */
+  --success-text: #065f46; /* emerald-800 */
+  --success-border: #a7f3d0; /* emerald-200 */
+  --warning-bg: #fffbeb; /* amber-50 */
+  --warning-text: #92400e; /* amber-800 */
+  --warning-border: #fde68a; /* amber-200 */
+  --danger-bg: #fff1f2; /* rose-50 */
+  --danger-text: #9f1239; /* rose-800 */
+  --danger-border: #fecdd3; /* rose-200 */
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Enforce monospace tabular numbers for numeric alignment */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Touch targets and form ergonomics */
+input, select, textarea, button {
+  font-family: inherit;
+}
+
+/* Custom scrollbars for industrial density */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f4f4f5;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+}
