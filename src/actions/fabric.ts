@@ -23,6 +23,7 @@ export type FabricActionState = {
 // 1. PARTY FABRIC INWARD (GATE IN)
 // -----------------------------------------------------------------------------
 const InwardSchema = z.object({
+  challanDate: z.string().optional(),
   partyId: z.string().min(1, "Party selection is required"),
   partyChallanNo: z.string().trim().min(1, "Party Challan # is required"),
   fabricType: z.string().trim().min(1, "Fabric type is required"),
@@ -41,6 +42,7 @@ export async function createPartyInwardAction(
   const session = await requireAuth();
 
   const rawData = {
+    challanDate: formData.get("challanDate") || undefined,
     partyId: formData.get("partyId"),
     partyChallanNo: formData.get("partyChallanNo"),
     fabricType: formData.get("fabricType"),
@@ -58,6 +60,7 @@ export async function createPartyInwardAction(
   }
 
   const {
+    challanDate,
     partyId,
     partyChallanNo,
     fabricType,
@@ -69,12 +72,13 @@ export async function createPartyInwardAction(
     remarks,
   } = parsed.data;
 
+  const dateObj = challanDate ? new Date(challanDate + "T12:00:00.000Z") : new Date();
   const shortageMeters = Number((challanMeters - measuredMeters).toFixed(2));
   const igpNumber = generateCode("IGP");
 
   try {
     await prisma.$transaction(async (tx: any) => {
-      // 1. Create Inward Record
+      // 1. Create Inward Record (saves user-chosen challanDate, system createdAt auto)
       const inward = await tx.fabricInward.create({
         data: {
           igpNumber,
@@ -86,6 +90,7 @@ export async function createPartyInwardAction(
           challanMeters,
           measuredMeters,
           shortageMeters,
+          challanDate: dateObj,
           driverDetails,
           remarks,
           receivedById: session.userId,
@@ -99,21 +104,40 @@ export async function createPartyInwardAction(
       });
 
       const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-      const newBalance = Number((currentBalance + measuredMeters).toFixed(2));
 
-      // 3. Post Credit to Party Fabric Ledger
+      // 3. Row 1: Gross Claimed Party Inward (+10,000m)
+      const balanceAfterClaimed = Number((currentBalance + challanMeters).toFixed(2));
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
           movementType: "PARTY_INWARD",
           referenceNumber: igpNumber,
-          creditMeters: measuredMeters,
+          creditMeters: challanMeters,
           debitMeters: 0,
           shrinkageMeters: 0,
-          runningBalance: newBalance,
-          notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}). Shortage: ${shortageMeters > 0 ? `${shortageMeters}m` : "None"}`,
+          runningBalance: balanceAfterClaimed,
+          timestamp: dateObj,
+          notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType})`,
         },
       });
+
+      // 4. Row 2: Dock Measurement Shortage Deduction (-150m in Shrinkage column), if shortage > 0
+      if (shortageMeters > 0) {
+        const balanceAfterShortage = Number((balanceAfterClaimed - shortageMeters).toFixed(2));
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId,
+            movementType: "INWARD_SHORTAGE",
+            referenceNumber: igpNumber,
+            creditMeters: 0,
+            debitMeters: 0,
+            shrinkageMeters: shortageMeters,
+            runningBalance: balanceAfterShortage,
+            timestamp: new Date(dateObj.getTime() + 1000), // Chronologically right after Row 1
+            notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${shortageMeters.toFixed(2)}m)`,
+          },
+        });
+      }
 
       return inward;
     });
@@ -122,7 +146,9 @@ export async function createPartyInwardAction(
     revalidatePath("/ledger");
     return {
       success: true,
-      message: `Inward Gate Pass ${igpNumber} generated. Credited +${measuredMeters}m to party balance.`,
+      message: `Inward Gate Pass ${igpNumber} generated. Full claimed +${challanMeters}m credited${
+        shortageMeters > 0 ? ` and -${shortageMeters}m shortage logged in ledger` : ""
+      }.`,
     };
   } catch (err: any) {
     console.error("Inward creation error:", err);
@@ -135,6 +161,7 @@ export async function createPartyInwardAction(
 // -----------------------------------------------------------------------------
 const UpdateInwardSchema = z.object({
   inwardId: z.string().min(1, "Inward record ID is required"),
+  challanDate: z.string().optional(),
   partyChallanNo: z.string().trim().min(1, "Party Challan # is required"),
   fabricType: z.string().trim().min(1, "Fabric type is required"),
   colorShade: z.string().trim().min(1, "Color / Shade is required"),
@@ -153,6 +180,7 @@ export async function updateFabricInwardAction(
 
   const rawData = {
     inwardId: formData.get("inwardId"),
+    challanDate: formData.get("challanDate") || undefined,
     partyChallanNo: formData.get("partyChallanNo"),
     fabricType: formData.get("fabricType"),
     colorShade: formData.get("colorShade"),
@@ -170,6 +198,7 @@ export async function updateFabricInwardAction(
 
   const {
     inwardId,
+    challanDate,
     partyChallanNo,
     fabricType,
     colorShade,
@@ -180,6 +209,7 @@ export async function updateFabricInwardAction(
     remarks,
   } = parsed.data;
 
+  const dateObj = challanDate ? new Date(challanDate + "T12:00:00.000Z") : new Date();
   const newShortage = Number((challanMeters - measuredMeters).toFixed(2));
 
   try {
@@ -230,6 +260,7 @@ export async function updateFabricInwardAction(
       await tx.fabricInward.update({
         where: { id: inwardId },
         data: {
+          challanDate: dateObj,
           partyChallanNo,
           fabricType,
           colorShade,
@@ -243,8 +274,8 @@ export async function updateFabricInwardAction(
         },
       });
 
-      // 2. Synchronize Party Ledger Entry for this IGP
-      const ledgerEntry = await tx.fabricLedgerEntry.findFirst({
+      // 2. Synchronize Row 1: PARTY_INWARD ledger entry (Gross claimed meters)
+      const inwardEntry = await tx.fabricLedgerEntry.findFirst({
         where: {
           partyId: existing.partyId,
           referenceNumber: existing.igpNumber,
@@ -252,17 +283,59 @@ export async function updateFabricInwardAction(
         },
       });
 
-      if (ledgerEntry) {
+      if (inwardEntry) {
         await tx.fabricLedgerEntry.update({
-          where: { id: ledgerEntry.id },
+          where: { id: inwardEntry.id },
           data: {
-            creditMeters: measuredMeters,
-            notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}). Shortage: ${newShortage > 0 ? `${newShortage}m` : "None"} [Edited]`,
+            creditMeters: challanMeters,
+            timestamp: dateObj,
+            notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}) [Edited]`,
           },
         });
       }
 
-      // 3. Reconcile subsequent running balances for this party
+      // 3. Synchronize Row 2: INWARD_SHORTAGE ledger entry
+      const shortageEntry = await tx.fabricLedgerEntry.findFirst({
+        where: {
+          partyId: existing.partyId,
+          referenceNumber: existing.igpNumber,
+          movementType: "INWARD_SHORTAGE",
+        },
+      });
+
+      if (newShortage > 0) {
+        if (shortageEntry) {
+          await tx.fabricLedgerEntry.update({
+            where: { id: shortageEntry.id },
+            data: {
+              shrinkageMeters: newShortage,
+              timestamp: new Date(dateObj.getTime() + 1000),
+              notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
+            },
+          });
+        } else {
+          await tx.fabricLedgerEntry.create({
+            data: {
+              partyId: existing.partyId,
+              movementType: "INWARD_SHORTAGE",
+              referenceNumber: existing.igpNumber,
+              creditMeters: 0,
+              debitMeters: 0,
+              shrinkageMeters: newShortage,
+              runningBalance: 0, // Will be recalculated below
+              timestamp: new Date(dateObj.getTime() + 1000),
+              notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
+            },
+          });
+        }
+      } else if (shortageEntry) {
+        // If shortage was revised to zero/surplus, remove shortage deduction
+        await tx.fabricLedgerEntry.delete({
+          where: { id: shortageEntry.id },
+        });
+      }
+
+      // 4. Reconcile all subsequent running balances for this party
       const allEntries = await tx.fabricLedgerEntry.findMany({
         where: { partyId: existing.partyId },
         orderBy: { timestamp: "asc" },

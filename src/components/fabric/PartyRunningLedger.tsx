@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BookOpen, Printer, ArrowDownLeft, ArrowUpRight, TrendingDown } from "lucide-react";
+import { metersToYards } from "@/lib/units";
 
 interface LedgerEntry {
   id: string;
@@ -99,6 +100,9 @@ export default function PartyRunningLedger({
             <div className="mt-1 text-lg font-bold font-mono text-zinc-950">
               +{totalCredit.toFixed(2)}m
             </div>
+            <span className="text-[10px] text-zinc-400 font-mono">
+              ≈ {metersToYards(totalCredit).toFixed(1)} yds
+            </span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-zinc-50 border border-zinc-200">
@@ -109,16 +113,22 @@ export default function PartyRunningLedger({
             <div className="mt-1 text-lg font-bold font-mono text-zinc-950">
               -{totalDebit.toFixed(2)}m
             </div>
+            <span className="text-[10px] text-zinc-400 font-mono">
+              ≈ {metersToYards(totalDebit).toFixed(1)} yds
+            </span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-zinc-50 border border-zinc-200">
             <div className="text-zinc-500 text-xs font-medium flex items-center gap-1">
               <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
-              <span>Process Shrinkage</span>
+              <span>Shrinkage / Shortage</span>
             </div>
             <div className="mt-1 text-lg font-bold font-mono text-rose-800">
               -{totalShrinkage.toFixed(2)}m
             </div>
+            <span className="text-[10px] text-zinc-400 font-mono">
+              ≈ {metersToYards(totalShrinkage).toFixed(1)} yds
+            </span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-emerald-50/70 border border-emerald-200">
@@ -126,6 +136,9 @@ export default function PartyRunningLedger({
             <div className="mt-1 text-xl font-bold font-mono text-emerald-950">
               {currentBalance.toFixed(2)}m
             </div>
+            <span className="text-[10px] text-emerald-700 font-mono font-medium">
+              ≈ {metersToYards(currentBalance).toFixed(1)} yds
+            </span>
           </div>
         </div>
       )}
@@ -190,7 +203,7 @@ export default function PartyRunningLedger({
               <th className="py-2.5 px-3">Transaction Details</th>
               <th className="py-2.5 px-3 text-right">Inward (+)</th>
               <th className="py-2.5 px-3 text-right">Delivery (-)</th>
-              <th className="py-2.5 px-3 text-right">Shrinkage (-)</th>
+              <th className="py-2.5 px-3 text-right">Shrinkage / Shortage (-)</th>
               <th className="py-2.5 px-3 text-right">Running Stock</th>
             </tr>
           </thead>

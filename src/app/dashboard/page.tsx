@@ -110,6 +110,7 @@ export default async function DashboardPage({
     driverDetails: i.driverDetails,
     remarks: i.remarks,
     editHistory: i.editHistory,
+    challanDate: i.challanDate,
     createdAt: i.createdAt,
     updatedAt: i.updatedAt,
     party: i.party,

@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { createPartyInwardAction, FabricActionState } from "@/actions/fabric";
 import { PackagePlus, AlertTriangle, CheckCircle2, ArrowDownLeft } from "lucide-react";
 import { metersToYards } from "@/lib/units";
+import DatePicker from "@/components/ui/DatePicker";
 
 interface PartyOption {
   id: string;
@@ -70,8 +71,20 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
           </select>
         </div>
 
-        {/* Row: Party Challan # & Roll Count */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        {/* Row: Date, Party Challan # & Roll Count */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          <div>
+            <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
+              Challan / Receiving Date
+            </label>
+            <DatePicker
+              name="challanDate"
+              required
+              defaultValue={new Date().toISOString().split("T")[0]}
+            />
+            <span className="text-[11px] text-zinc-500 mt-0.5 block">Paper date or receiving date</span>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
               Party Challan / Bilty #
@@ -80,9 +93,10 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
               type="text"
               name="partyChallanNo"
               required
-              placeholder="e.g. CH-9902 or BL-410"
+              placeholder="e.g. CH-9902"
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             />
+            <span className="text-[11px] text-zinc-500 mt-0.5 block">Printed on client delivery slip</span>
           </div>
 
           <div>
@@ -98,6 +112,7 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
               placeholder="e.g. 20"
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             />
+            <span className="text-[11px] text-zinc-500 mt-0.5 block">Counted rolls of cloth</span>
           </div>
         </div>
 

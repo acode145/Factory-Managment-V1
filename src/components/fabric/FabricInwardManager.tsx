@@ -102,7 +102,7 @@ export default function FabricInwardManager({ parties, inwardList }: FabricInwar
                       <div className="flex items-center justify-between font-mono">
                         <span className="font-bold text-zinc-950 text-xs sm:text-sm">{item.igpNumber}</span>
                         <span className="text-zinc-400 text-[11px]">
-                          {new Date(item.createdAt).toLocaleDateString("en-GB")}
+                          {new Date(item.challanDate || item.createdAt).toLocaleDateString("en-GB")}
                         </span>
                       </div>
 

@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { updateFabricInwardAction, FabricActionState } from "@/actions/fabric";
 import { metersToYards } from "@/lib/units";
 import { X, FileEdit, AlertTriangle, CheckCircle2, History, Loader2, Save } from "lucide-react";
+import DatePicker from "@/components/ui/DatePicker";
 
 export interface InwardReceiptItem {
   id: string;
@@ -18,6 +19,7 @@ export interface InwardReceiptItem {
   shortageMeters: number;
   driverDetails?: string | null;
   remarks?: string | null;
+  challanDate?: string | Date;
   createdAt: string | Date;
   updatedAt?: string | Date | null;
   receivedBy?: { fullName: string } | null;
@@ -42,6 +44,7 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
     {}
   );
 
+  const [challanDate, setChallanDate] = useState("");
   const [partyChallanNo, setPartyChallanNo] = useState("");
   const [fabricType, setFabricType] = useState("");
   const [colorShade, setColorShade] = useState("");
@@ -54,6 +57,8 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
 
   useEffect(() => {
     if (inward) {
+      const rawDate = inward.challanDate ? new Date(inward.challanDate) : new Date(inward.createdAt);
+      setChallanDate(rawDate.toISOString().split("T")[0]);
       setPartyChallanNo(inward.partyChallanNo || "");
       setFabricType(inward.fabricType || "");
       setColorShade(inward.colorShade || "");
@@ -136,8 +141,20 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
           <form id="edit-inward-form" action={formAction} className="space-y-4">
             <input type="hidden" name="inwardId" value={inward.id} />
 
-            {/* Row 1: Challan No & Rolls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Row 1: Date, Challan No & Rolls */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                  Challan / Receiving Date
+                </label>
+                <DatePicker
+                  name="challanDate"
+                  required
+                  value={challanDate}
+                  onChange={(val) => setChallanDate(val)}
+                />
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
                   Party Challan / Bilty #
