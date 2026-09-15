@@ -373,6 +373,7 @@ export async function updateFabricInwardAction(
 // 2. OUTSOURCE DYEING / PRINTING: DISPATCH TO VENDOR (OGP)
 // -----------------------------------------------------------------------------
 const OutsourceDispatchSchema = z.object({
+  sentDate: z.string().optional(),
   partyId: z.string().min(1, "Party is required"),
   vendorId: z.string().min(1, "Dyeing / Printing vendor is required"),
   inwardId: z.string().optional(),
@@ -388,6 +389,7 @@ export async function createOutsourceDispatchAction(
   const session = await requireAuth();
 
   const rawData = {
+    sentDate: formData.get("sentDate") || undefined,
     partyId: formData.get("partyId"),
     vendorId: formData.get("vendorId"),
     inwardId: formData.get("inwardId") || undefined,
@@ -401,29 +403,70 @@ export async function createOutsourceDispatchAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { partyId, vendorId, inwardId, processType, targetShade, sentMeters } = parsed.data;
+  const { sentDate, partyId, vendorId, inwardId, processType, targetShade, sentMeters } = parsed.data;
+  const dateObj = sentDate ? new Date(sentDate + "T12:00:00.000Z") : new Date();
   const ogpNumber = generateCode("OGP");
 
   try {
-    await prisma.outsourceBatch.create({
-      data: {
-        ogpNumber,
-        partyId,
-        vendorId,
-        inwardId,
-        processType,
-        targetShade,
-        sentMeters,
-        sentById: session.userId,
-        status: "WITH_VENDOR",
-      },
+    const [party, vendor, lastEntry] = await Promise.all([
+      prisma.party.findUnique({ where: { id: partyId } }),
+      prisma.vendor.findUnique({ where: { id: vendorId } }),
+      prisma.fabricLedgerEntry.findFirst({
+        where: { partyId },
+        orderBy: { timestamp: "desc" },
+      }),
+    ]);
+
+    if (!party) return { error: "Party not found." };
+    if (!vendor) return { error: "Vendor not found." };
+
+    const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
+    if (sentMeters > currentBalance) {
+      return {
+        error: `Cannot dispatch ${sentMeters.toFixed(2)}m. Party ${party.name} currently only has ${currentBalance.toFixed(2)}m in factory custody.`,
+      };
+    }
+
+    await prisma.$transaction(async (tx: any) => {
+      // 1. Create Outsource Batch
+      await tx.outsourceBatch.create({
+        data: {
+          ogpNumber,
+          partyId,
+          vendorId,
+          inwardId,
+          processType,
+          targetShade,
+          sentMeters,
+          sentDate: dateObj,
+          sentById: session.userId,
+          status: "WITH_VENDOR",
+        },
+      });
+
+      // 2. Post Outward Dispatch Entry to Party Fabric Ledger
+      const newBalance = Number((currentBalance - sentMeters).toFixed(2));
+      await tx.fabricLedgerEntry.create({
+        data: {
+          partyId,
+          movementType: "OUTWARD_TO_VENDOR",
+          referenceNumber: ogpNumber,
+          creditMeters: 0,
+          debitMeters: sentMeters,
+          shrinkageMeters: 0,
+          runningBalance: newBalance,
+          timestamp: dateObj,
+          notes: `Dispatched to ${vendor.name} for ${processType} (Target: ${targetShade})`,
+        },
+      });
     });
 
     revalidatePath("/dashboard");
     revalidatePath("/outsource");
+    revalidatePath("/ledger");
     return {
       success: true,
-      message: `Outward Gate Pass ${ogpNumber} issued for ${sentMeters}m to vendor.`,
+      message: `Outward Gate Pass ${ogpNumber} issued for ${sentMeters}m to ${vendor.name}. Logged in party ledger.`,
     };
   } catch (err: any) {
     console.error("Outsource dispatch error:", err);
@@ -436,6 +479,7 @@ export async function createOutsourceDispatchAction(
 // -----------------------------------------------------------------------------
 const OutsourceReturnSchema = z.object({
   batchId: z.string().min(1, "Batch ID is required"),
+  receivedDate: z.string().optional(),
   vendorChallanNo: z.string().trim().min(1, "Vendor Return Challan # is required"),
   receivedMeters: z.coerce.number().positive("Received meters must be positive"),
   remarks: z.string().optional(),
@@ -449,6 +493,7 @@ export async function returnOutsourceBatchAction(
 
   const rawData = {
     batchId: formData.get("batchId"),
+    receivedDate: formData.get("receivedDate") || undefined,
     vendorChallanNo: formData.get("vendorChallanNo"),
     receivedMeters: formData.get("receivedMeters"),
     remarks: formData.get("remarks") || undefined,
@@ -459,11 +504,13 @@ export async function returnOutsourceBatchAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { batchId, vendorChallanNo, receivedMeters, remarks } = parsed.data;
+  const { batchId, receivedDate, vendorChallanNo, receivedMeters, remarks } = parsed.data;
+  const dateObj = receivedDate ? new Date(receivedDate + "T12:00:00.000Z") : new Date();
 
   try {
     const batch = await prisma.outsourceBatch.findUnique({
       where: { id: batchId },
+      include: { vendor: true },
     });
 
     if (!batch) {
@@ -484,34 +531,60 @@ export async function returnOutsourceBatchAction(
           receivedMeters,
           shrinkageMeters,
           shrinkagePercent,
-          receivedDate: new Date(),
+          receivedDate: dateObj,
           receivedById: session.userId,
           remarks,
         },
       });
 
-      // 2. Ledger entry documenting shrinkage against party balance
+      // 2. Fetch last running balance for this party
       const lastEntry = await tx.fabricLedgerEntry.findFirst({
         where: { partyId: batch.partyId },
         orderBy: { timestamp: "desc" },
       });
 
       const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-      // Shrinkage reduces the raw fabric pool that was initially credited
-      const newBalance = Number((currentBalance - shrinkageMeters).toFixed(2));
+      // Net custody stock increases by physical meters received back (+receivedMeters)
+      const newBalance = Number((currentBalance + receivedMeters).toFixed(2));
 
+      // 3. Option A Ledger Entry:
+      // Inward (+) receives gross sentMeters (+5,000m)
+      // Shrinkage (-) deducts process loss (-300m)
+      // Net running balance = currentBalance + 5,000m - 300m = currentBalance + 4,700m!
       await tx.fabricLedgerEntry.create({
         data: {
           partyId: batch.partyId,
           movementType: "INWARD_FROM_VENDOR",
           referenceNumber: batch.ogpNumber,
-          creditMeters: 0,
+          creditMeters: sentMeters,
           debitMeters: 0,
-          shrinkageMeters,
+          shrinkageMeters: shrinkageMeters > 0 ? shrinkageMeters : 0,
           runningBalance: newBalance,
-          notes: `Returned from Dyer Challan #${vendorChallanNo}. Received: ${receivedMeters}m | Technical Shrinkage: ${shrinkageMeters}m (${shrinkagePercent}%)`,
+          timestamp: dateObj,
+          notes: `Received from ${batch.vendor.name} Challan #${vendorChallanNo} (${batch.processType}, ${batch.targetShade}). Received: ${receivedMeters.toFixed(2)}m | Technical Shrinkage: ${shrinkageMeters.toFixed(2)}m (${shrinkagePercent.toFixed(2)}%)`,
         },
       });
+
+      // 4. Reconcile all subsequent running balances for this party
+      const allEntries = await tx.fabricLedgerEntry.findMany({
+        where: { partyId: batch.partyId },
+        orderBy: { timestamp: "asc" },
+      });
+
+      let running = 0;
+      for (const entry of allEntries) {
+        const credit = Number(entry.creditMeters || 0);
+        const debit = Number(entry.debitMeters || 0);
+        const shrinkage = Number(entry.shrinkageMeters || 0);
+        running = Number((running + credit - debit - shrinkage).toFixed(2));
+
+        if (Number(entry.runningBalance) !== running) {
+          await tx.fabricLedgerEntry.update({
+            where: { id: entry.id },
+            data: { runningBalance: running },
+          });
+        }
+      }
     });
 
     revalidatePath("/dashboard");

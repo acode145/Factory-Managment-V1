@@ -5,12 +5,20 @@ import { Calendar } from "lucide-react";
 
 interface DatePickerProps {
   name: string;
-  defaultValue?: string; // YYYY-MM-DD format
-  value?: string; // YYYY-MM-DD format
+  defaultValue?: string | Date; // YYYY-MM-DD format or Date instance
+  value?: string | Date; // YYYY-MM-DD format or Date instance
   onChange?: (val: string) => void;
   required?: boolean;
   className?: string;
   disabled?: boolean;
+}
+
+function normalizeToIso(d?: string | Date): string {
+  if (!d) return "";
+  if (d instanceof Date) {
+    return d.toISOString().split("T")[0];
+  }
+  return d;
 }
 
 // Convert YYYY-MM-DD -> DD/MM/YYYY
@@ -47,16 +55,19 @@ export default function DatePicker({
   disabled = false,
 }: DatePickerProps) {
   const isControlled = value !== undefined;
-  const initialIso = (isControlled ? value : defaultValue) || new Date().toISOString().split("T")[0];
+  const initialIso =
+    normalizeToIso(isControlled ? value : defaultValue) ||
+    new Date().toISOString().split("T")[0];
 
   const [isoDate, setIsoDate] = useState<string>(initialIso);
   const [displayText, setDisplayText] = useState<string>(toDisplayFormat(initialIso));
   const hiddenInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isControlled && value) {
-      setIsoDate(value);
-      setDisplayText(toDisplayFormat(value));
+    if (isControlled && value !== undefined) {
+      const normalized = normalizeToIso(value);
+      setIsoDate(normalized);
+      setDisplayText(toDisplayFormat(normalized));
     }
   }, [isControlled, value]);
 

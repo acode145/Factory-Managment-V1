@@ -6,12 +6,15 @@ import {
   returnOutsourceBatchAction,
   FabricActionState,
 } from "@/actions/fabric";
-import { Truck, Send, RotateCcw, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import DatePicker from "@/components/ui/DatePicker";
+import { metersToYards } from "@/lib/units";
+import { Send, RotateCcw, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 
 interface PartyOption {
   id: string;
   name: string;
   code: string;
+  balance?: number;
 }
 
 interface VendorOption {
@@ -58,6 +61,16 @@ export default function OutsourceBatchManager({
     {}
   );
 
+  // Dispatch Form State for balance validation & dual-unit preview
+  const [selectedPartyId, setSelectedPartyId] = useState("");
+  const [sentMetersInput, setSentMetersInput] = useState("");
+
+  const selectedParty = parties.find((p) => p.id === selectedPartyId);
+  const availableBalance = selectedParty?.balance ?? 0;
+  const parsedSentMeters = parseFloat(sentMetersInput) || 0;
+  const isExceedingBalance = Boolean(selectedPartyId && parsedSentMeters > availableBalance);
+
+  // Return Modal State
   const [activeReturnBatch, setActiveReturnBatch] = useState<OutsourceBatchItem | null>(null);
   const [receivedMetersInput, setReceivedMetersInput] = useState("");
 
@@ -106,6 +119,15 @@ export default function OutsourceBatchManager({
           </div>
 
           <form action={dispatchFormAction} className="space-y-3.5">
+            {/* Dispatch Date Selector with DD/MM/YYYY */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Dispatch Date
+              </label>
+              <DatePicker name="sentDate" defaultValue={new Date()} />
+            </div>
+
+            {/* Client Party with Available Factory Custody Balance */}
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
                 Client Party
@@ -113,6 +135,8 @@ export default function OutsourceBatchManager({
               <select
                 name="partyId"
                 required
+                value={selectedPartyId}
+                onChange={(e) => setSelectedPartyId(e.target.value)}
                 className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               >
                 <option value="">-- Select Party --</option>
@@ -122,6 +146,18 @@ export default function OutsourceBatchManager({
                   </option>
                 ))}
               </select>
+
+              {selectedParty && (
+                <div className="mt-1.5 flex items-center justify-between text-[11px] bg-zinc-50 px-2.5 py-1.5 rounded border border-zinc-200">
+                  <span className="text-zinc-500 font-medium">Available in Factory:</span>
+                  <span className="font-mono font-bold text-zinc-900">
+                    {availableBalance.toFixed(2)}m{" "}
+                    <span className="text-zinc-500 font-normal">
+                      (≈ {metersToYards(availableBalance).toFixed(1)} yds)
+                    </span>
+                  </span>
+                </div>
+              )}
             </div>
 
             <div>
@@ -171,25 +207,53 @@ export default function OutsourceBatchManager({
               />
             </div>
 
+            {/* Meters Sent Out with Strict Balance Check & Dual Units */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                Meters Sent Out
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                  Meters Sent Out
+                </label>
+                {parsedSentMeters > 0 && (
+                  <span className="text-[11px] font-mono text-zinc-500">
+                    ≈ {metersToYards(parsedSentMeters).toFixed(1)} yds
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
                 step="0.01"
                 name="sentMeters"
                 required
                 inputMode="decimal"
-                placeholder="e.g. 9900.00"
-                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                value={sentMetersInput}
+                onChange={(e) => setSentMetersInput(e.target.value)}
+                placeholder={
+                  selectedParty
+                    ? `Max: ${availableBalance.toFixed(2)}m`
+                    : "e.g. 9800.00"
+                }
+                className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                  isExceedingBalance
+                    ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20"
+                    : "border-zinc-300 focus:ring-zinc-900"
+                }`}
               />
+
+              {/* Red warning if exceeding available balance */}
+              {isExceedingBalance && (
+                <div className="mt-1.5 p-2 bg-rose-50 border border-rose-200 rounded text-xs text-rose-800 flex items-center gap-1.5 font-medium">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>
+                    Cannot send more than current balance ({availableBalance.toFixed(2)}m)
+                  </span>
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              disabled={isDispatching}
-              className="w-full h-12 mt-2 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-md text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+              disabled={isDispatching || isExceedingBalance}
+              className="w-full h-12 mt-2 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-md text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isDispatching ? (
                 <span className="font-mono">DISPATCHING...</span>
@@ -252,6 +316,9 @@ export default function OutsourceBatchManager({
                         <span className="text-sm font-bold text-zinc-900">
                           {Number(batch.sentMeters).toFixed(2)}m
                         </span>
+                        <span className="text-[10px] text-zinc-500 block">
+                          ≈ {metersToYards(Number(batch.sentMeters)).toFixed(1)} yds
+                        </span>
                       </div>
 
                       <button
@@ -306,9 +373,15 @@ export default function OutsourceBatchManager({
                           / {Number(batch.sentMeters).toFixed(2)}m
                         </span>
                       </div>
-                      <div className="text-[11px] text-rose-700 font-medium">
-                        Shrinkage: -{Number(batch.shrinkageMeters).toFixed(2)}m (
-                        {Number(batch.shrinkagePercent).toFixed(2)}%)
+                      <div className="text-[10px] text-zinc-500">
+                        ≈ {metersToYards(Number(batch.receivedMeters)).toFixed(1)} yds
+                      </div>
+                      <div className="text-[11px] text-rose-700 font-medium mt-0.5">
+                        Shrinkage: -{Number(batch.shrinkageMeters).toFixed(2)}m{" "}
+                        <span className="text-[10px] text-zinc-400 font-normal">
+                          (≈ {metersToYards(Number(batch.shrinkageMeters)).toFixed(1)} yds)
+                        </span>{" "}
+                        ({Number(batch.shrinkagePercent).toFixed(2)}%)
                       </div>
                     </div>
                   </div>
@@ -330,7 +403,7 @@ export default function OutsourceBatchManager({
               </div>
               <button
                 onClick={() => setActiveReturnBatch(null)}
-                className="text-zinc-400 hover:text-zinc-700 text-lg leading-none"
+                className="text-zinc-400 hover:text-zinc-700 text-lg leading-none cursor-pointer"
               >
                 ✕
               </button>
@@ -348,13 +421,24 @@ export default function OutsourceBatchManager({
               <div className="flex justify-between">
                 <span className="text-zinc-500">Sent Meterage:</span>
                 <span className="font-mono font-bold text-zinc-900">
-                  {sentMetersNum.toFixed(2)}m
+                  {sentMetersNum.toFixed(2)}m{" "}
+                  <span className="text-zinc-500 font-normal">
+                    (≈ {metersToYards(sentMetersNum).toFixed(1)} yds)
+                  </span>
                 </span>
               </div>
             </div>
 
             <form action={returnFormAction} className="space-y-3.5">
               <input type="hidden" name="batchId" value={activeReturnBatch.id} />
+
+              {/* Received Date Picker with DD/MM/YYYY format */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                  Received / Return Date
+                </label>
+                <DatePicker name="receivedDate" defaultValue={new Date()} />
+              </div>
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
@@ -370,9 +454,16 @@ export default function OutsourceBatchManager({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                  Physical Received Meters
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                    Physical Received Meters
+                  </label>
+                  {receivedMetersNum > 0 && (
+                    <span className="text-[11px] font-mono text-zinc-500">
+                      ≈ {metersToYards(receivedMetersNum).toFixed(1)} yds
+                    </span>
+                  )}
+                </div>
                 <input
                   type="number"
                   step="0.01"
@@ -386,19 +477,24 @@ export default function OutsourceBatchManager({
                 />
               </div>
 
-              {/* Real-time calculated technical shrinkage */}
+              {/* Real-time calculated technical shrinkage & 3-way reconciliation */}
               {receivedMetersNum > 0 && (
                 <div className="p-3 bg-rose-50 border border-rose-200 rounded-md text-xs space-y-1">
                   <div className="flex justify-between font-mono">
                     <span className="text-rose-800 font-medium">Process Shrinkage Loss:</span>
-                    <span className="font-bold text-rose-900">-{calculatedShrinkage.toFixed(2)}m</span>
+                    <span className="font-bold text-rose-900">
+                      -{calculatedShrinkage.toFixed(2)}m{" "}
+                      <span className="text-rose-700 font-normal">
+                        (≈ {metersToYards(calculatedShrinkage).toFixed(1)} yds)
+                      </span>
+                    </span>
                   </div>
                   <div className="flex justify-between font-mono">
                     <span className="text-rose-800 font-medium">Shrinkage Rate:</span>
                     <span className="font-bold text-rose-900">{calculatedPercent.toFixed(2)}%</span>
                   </div>
                   <span className="text-[10px] text-rose-700 block mt-1">
-                    This shrinkage will be automatically recorded in the party custody ledger.
+                    Factory stock will increase by +{receivedMetersNum.toFixed(2)}m (gross return +{sentMetersNum.toFixed(2)}m minus {calculatedShrinkage.toFixed(2)}m shrinkage).
                   </span>
                 </div>
               )}
@@ -410,7 +506,7 @@ export default function OutsourceBatchManager({
                   onClick={() => {
                     setTimeout(() => setActiveReturnBatch(null), 800);
                   }}
-                  className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold uppercase tracking-wider rounded-md flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold uppercase tracking-wider rounded-md flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Verify & Credit Return</span>
@@ -418,7 +514,7 @@ export default function OutsourceBatchManager({
                 <button
                   type="button"
                   onClick={() => setActiveReturnBatch(null)}
-                  className="h-12 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs rounded-md"
+                  className="h-12 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs rounded-md cursor-pointer"
                 >
                   Cancel
                 </button>

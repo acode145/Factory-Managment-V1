@@ -268,7 +268,7 @@ export default async function DashboardPage({
         )}
 
         {tab === "outsource" && (
-          <OutsourceBatchManager parties={parties} vendors={vendors} batches={batches} />
+          <OutsourceBatchManager parties={partyBalances} vendors={vendors} batches={batches} />
         )}
 
         {tab === "delivery" && <DeliveryChallanForm parties={partyBalances} />}
