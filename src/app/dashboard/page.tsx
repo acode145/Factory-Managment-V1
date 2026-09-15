@@ -65,7 +65,7 @@ export default async function DashboardPage({
   ]);
 
   // Serialize Prisma Decimals into plain JavaScript numbers to prevent Client Component serialization errors
-  const batches = rawBatches.map((b) => ({
+  const batches = rawBatches.map((b: any) => ({
     id: b.id,
     ogpNumber: b.ogpNumber,
     processType: b.processType,
@@ -83,7 +83,7 @@ export default async function DashboardPage({
     sentBy: b.sentBy,
   }));
 
-  const ledgerEntries = rawLedgerEntries.map((e) => ({
+  const ledgerEntries = rawLedgerEntries.map((e: any) => ({
     id: e.id,
     partyId: e.partyId,
     movementType: e.movementType,
@@ -96,7 +96,7 @@ export default async function DashboardPage({
     notes: e.notes,
   }));
 
-  const inwardList = rawInwardList.map((i) => ({
+  const inwardList = rawInwardList.map((i: any) => ({
     id: i.id,
     igpNumber: i.igpNumber,
     partyId: i.partyId,
@@ -113,8 +113,8 @@ export default async function DashboardPage({
   }));
 
   // Compute live KPI metrics
-  const partyBalances = parties.map((p) => {
-    const partyEntries = ledgerEntries.filter((e) => e.partyId === p.id);
+  const partyBalances = parties.map((p: any) => {
+    const partyEntries = ledgerEntries.filter((e: any) => e.partyId === p.id);
     const balance = partyEntries.length > 0 ? Number(partyEntries[0].runningBalance) : 0;
     return {
       id: p.id,
@@ -125,14 +125,14 @@ export default async function DashboardPage({
     };
   });
 
-  const totalFabricInCustody = partyBalances.reduce((acc, curr) => acc + curr.balance, 0);
+  const totalFabricInCustody = partyBalances.reduce((acc: number, curr: any) => acc + curr.balance, 0);
 
   const totalAtDyers = batches
-    .filter((b) => b.status === "WITH_VENDOR")
-    .reduce((acc, curr) => acc + Number(curr.sentMeters), 0);
+    .filter((b: any) => b.status === "WITH_VENDOR")
+    .reduce((acc: number, curr: any) => acc + Number(curr.sentMeters), 0);
 
   const totalShortagesFlagged = inwardList.reduce(
-    (acc, curr) => acc + (curr.shortageMeters > 0 ? curr.shortageMeters : 0),
+    (acc: number, curr: any) => acc + (curr.shortageMeters > 0 ? curr.shortageMeters : 0),
     0
   );
 
@@ -271,7 +271,7 @@ export default async function DashboardPage({
                 </div>
               ) : (
                 <div className="divide-y divide-zinc-100 mt-2">
-                  {inwardList.map((item) => (
+                  {inwardList.map((item: any) => (
                     <div key={item.id} className="py-3 text-xs">
                       <div className="flex items-center justify-between font-mono">
                         <span className="font-bold text-zinc-950">{item.igpNumber}</span>

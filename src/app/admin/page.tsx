@@ -29,7 +29,7 @@ export default async function AdminPage() {
     prisma.vendor.count(),
   ]);
 
-  const activeUsersCount = users.filter((u) => u.isActive).length;
+  const activeUsersCount = users.filter((u: any) => u.isActive).length;
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-100">

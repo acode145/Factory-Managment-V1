@@ -73,7 +73,7 @@ export async function createPartyInwardAction(
   const igpNumber = generateCode("IGP");
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // 1. Create Inward Record
       const inward = await tx.fabricInward.create({
         data: {
@@ -235,7 +235,7 @@ export async function returnOutsourceBatchAction(
     const shrinkageMeters = Number((sentMeters - receivedMeters).toFixed(2));
     const shrinkagePercent = Number(((shrinkageMeters / sentMeters) * 100).toFixed(2));
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // 1. Update Batch status
       await tx.outsourceBatch.update({
         where: { id: batchId },
@@ -328,7 +328,7 @@ export async function createDeliveryChallanAction(
   const challanNumber = generateCode("DC");
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // 1. Create Delivery Challan
       const challan = await tx.deliveryChallan.create({
         data: {
