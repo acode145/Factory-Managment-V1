@@ -2,10 +2,11 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import Header from "@/components/Header";
-import FabricInwardForm from "@/components/fabric/FabricInwardForm";
+import FabricInwardManager from "@/components/fabric/FabricInwardManager";
 import OutsourceBatchManager from "@/components/fabric/OutsourceBatchManager";
 import DeliveryChallanForm from "@/components/fabric/DeliveryChallanForm";
 import PartyRunningLedger from "@/components/fabric/PartyRunningLedger";
+import { metersToYards } from "@/lib/units";
 import {
   Layers,
   ArrowDownLeft,
@@ -44,7 +45,6 @@ export default async function DashboardPage({
       orderBy: { name: "asc" },
     }),
     prisma.fabricInward.findMany({
-      take: 10,
       orderBy: { createdAt: "desc" },
       include: {
         party: { select: { name: true, code: true } },
@@ -107,7 +107,11 @@ export default async function DashboardPage({
     challanMeters: Number(i.challanMeters),
     measuredMeters: Number(i.measuredMeters),
     shortageMeters: Number(i.shortageMeters),
+    driverDetails: i.driverDetails,
+    remarks: i.remarks,
+    editHistory: i.editHistory,
     createdAt: i.createdAt,
+    updatedAt: i.updatedAt,
     party: i.party,
     receivedBy: i.receivedBy,
   }));
@@ -164,7 +168,9 @@ export default async function DashboardPage({
               <div className="mt-1 text-xl font-bold font-mono text-zinc-950">
                 {totalFabricInCustody.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">Across {parties.length} parties</span>
+              <span className="text-[10px] text-zinc-400 font-mono">
+                ≈ {metersToYards(totalFabricInCustody).toFixed(1)} yds • Across {parties.length} parties
+              </span>
             </div>
 
             <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
@@ -175,7 +181,9 @@ export default async function DashboardPage({
               <div className="mt-1 text-xl font-bold font-mono text-zinc-950">
                 {totalAtDyers.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">Pending return from vendors</span>
+              <span className="text-[10px] text-zinc-400 font-mono">
+                ≈ {metersToYards(totalAtDyers).toFixed(1)} yds • In vendor processing
+              </span>
             </div>
 
             <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
@@ -186,7 +194,9 @@ export default async function DashboardPage({
               <div className="mt-1 text-xl font-bold font-mono text-rose-800">
                 {totalShortagesFlagged.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">Claimed vs measured gap</span>
+              <span className="text-[10px] text-zinc-400 font-mono">
+                ≈ {metersToYards(totalShortagesFlagged).toFixed(1)} yds • Claimed vs measured gap
+              </span>
             </div>
 
             <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
@@ -253,51 +263,7 @@ export default async function DashboardPage({
 
         {/* Tab View Content */}
         {tab === "inward" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
-              <FabricInwardForm parties={parties} />
-            </div>
-
-            {/* Recent Gate Receipts */}
-            <div className="lg:col-span-1 bg-white border border-zinc-200 rounded-xl p-5 shadow-xs h-fit">
-              <h3 className="text-sm font-bold text-zinc-950 pb-3 border-b border-zinc-100 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-zinc-500" />
-                <span>Recent Inward Receipts</span>
-              </h3>
-
-              {inwardList.length === 0 ? (
-                <div className="py-8 text-center text-xs text-zinc-400 font-mono">
-                  No inward receipts recorded yet.
-                </div>
-              ) : (
-                <div className="divide-y divide-zinc-100 mt-2">
-                  {inwardList.map((item: any) => (
-                    <div key={item.id} className="py-3 text-xs">
-                      <div className="flex items-center justify-between font-mono">
-                        <span className="font-bold text-zinc-950">{item.igpNumber}</span>
-                        <span className="text-zinc-400 text-[10px]">
-                          {new Date(item.createdAt).toLocaleDateString("en-GB")}
-                        </span>
-                      </div>
-                      <div className="text-zinc-700 font-medium mt-0.5">
-                        {item.party.name} • {item.rollCount} rolls of {item.fabricType}
-                      </div>
-                      <div className="flex items-center justify-between mt-1 text-[11px] font-mono">
-                        <span className="text-zinc-500">
-                          Measured: <strong>{item.measuredMeters.toFixed(2)}m</strong>
-                        </span>
-                        {item.shortageMeters > 0 && (
-                          <span className="text-rose-700 font-bold">
-                            Shortage: -{item.shortageMeters.toFixed(2)}m
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          <FabricInwardManager parties={parties} inwardList={inwardList} />
         )}
 
         {tab === "outsource" && (

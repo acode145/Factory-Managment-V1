@@ -131,6 +131,172 @@ export async function createPartyInwardAction(
 }
 
 // -----------------------------------------------------------------------------
+// 1B. UPDATE FABRIC INWARD RECEIPT (WITH AUDIT TRAIL & LEDGER RECONCILIATION)
+// -----------------------------------------------------------------------------
+const UpdateInwardSchema = z.object({
+  inwardId: z.string().min(1, "Inward record ID is required"),
+  partyChallanNo: z.string().trim().min(1, "Party Challan # is required"),
+  fabricType: z.string().trim().min(1, "Fabric type is required"),
+  colorShade: z.string().trim().min(1, "Color / Shade is required"),
+  rollCount: z.coerce.number().int().positive("Roll count must be greater than 0"),
+  challanMeters: z.coerce.number().positive("Party Challan meterage must be positive"),
+  measuredMeters: z.coerce.number().positive("Physical measured meterage must be positive"),
+  driverDetails: z.string().optional(),
+  remarks: z.string().optional(),
+});
+
+export async function updateFabricInwardAction(
+  prevState: FabricActionState | null,
+  formData: FormData
+): Promise<FabricActionState> {
+  const session = await requireAuth();
+
+  const rawData = {
+    inwardId: formData.get("inwardId"),
+    partyChallanNo: formData.get("partyChallanNo"),
+    fabricType: formData.get("fabricType"),
+    colorShade: formData.get("colorShade"),
+    rollCount: formData.get("rollCount"),
+    challanMeters: formData.get("challanMeters"),
+    measuredMeters: formData.get("measuredMeters"),
+    driverDetails: formData.get("driverDetails") || undefined,
+    remarks: formData.get("remarks") || undefined,
+  };
+
+  const parsed = UpdateInwardSchema.safeParse(rawData);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0].message };
+  }
+
+  const {
+    inwardId,
+    partyChallanNo,
+    fabricType,
+    colorShade,
+    rollCount,
+    challanMeters,
+    measuredMeters,
+    driverDetails,
+    remarks,
+  } = parsed.data;
+
+  const newShortage = Number((challanMeters - measuredMeters).toFixed(2));
+
+  try {
+    const existing = await prisma.fabricInward.findUnique({
+      where: { id: inwardId },
+      include: { party: true },
+    });
+
+    if (!existing) {
+      return { error: "Inward receipt record not found." };
+    }
+
+    // Build human-readable audit change log
+    const changeParts: string[] = [];
+    const oldMeasured = Number(existing.measuredMeters);
+    const oldChallan = Number(existing.challanMeters);
+    if (oldMeasured !== measuredMeters) {
+      changeParts.push(`Measured: ${oldMeasured}m -> ${measuredMeters}m`);
+    }
+    if (oldChallan !== challanMeters) {
+      changeParts.push(`Claimed: ${oldChallan}m -> ${challanMeters}m`);
+    }
+    if (existing.rollCount !== rollCount) {
+      changeParts.push(`Rolls: ${existing.rollCount} -> ${rollCount}`);
+    }
+    if (existing.partyChallanNo !== partyChallanNo) {
+      changeParts.push(`Challan#: ${existing.partyChallanNo} -> ${partyChallanNo}`);
+    }
+    if (existing.fabricType !== fabricType) {
+      changeParts.push(`Fabric: ${existing.fabricType} -> ${fabricType}`);
+    }
+    if (existing.colorShade !== colorShade) {
+      changeParts.push(`Shade: ${existing.colorShade} -> ${colorShade}`);
+    }
+    const changesSummary = changeParts.length > 0 ? changeParts.join("; ") : "Details updated";
+
+    const pastHistory = Array.isArray(existing.editHistory) ? (existing.editHistory as any[]) : [];
+    const auditEntry = {
+      updatedById: session.userId,
+      updatedByName: session.fullName || session.username,
+      updatedAt: new Date().toISOString(),
+      changes: changesSummary,
+    };
+    const newHistory = [...pastHistory, auditEntry];
+
+    await prisma.$transaction(async (tx: any) => {
+      // 1. Update Inward Record
+      await tx.fabricInward.update({
+        where: { id: inwardId },
+        data: {
+          partyChallanNo,
+          fabricType,
+          colorShade,
+          rollCount,
+          challanMeters,
+          measuredMeters,
+          shortageMeters: newShortage,
+          driverDetails,
+          remarks,
+          editHistory: newHistory,
+        },
+      });
+
+      // 2. Synchronize Party Ledger Entry for this IGP
+      const ledgerEntry = await tx.fabricLedgerEntry.findFirst({
+        where: {
+          partyId: existing.partyId,
+          referenceNumber: existing.igpNumber,
+          movementType: "PARTY_INWARD",
+        },
+      });
+
+      if (ledgerEntry) {
+        await tx.fabricLedgerEntry.update({
+          where: { id: ledgerEntry.id },
+          data: {
+            creditMeters: measuredMeters,
+            notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}). Shortage: ${newShortage > 0 ? `${newShortage}m` : "None"} [Edited]`,
+          },
+        });
+      }
+
+      // 3. Reconcile subsequent running balances for this party
+      const allEntries = await tx.fabricLedgerEntry.findMany({
+        where: { partyId: existing.partyId },
+        orderBy: { timestamp: "asc" },
+      });
+
+      let running = 0;
+      for (const entry of allEntries) {
+        const credit = Number(entry.creditMeters || 0);
+        const debit = Number(entry.debitMeters || 0);
+        const shrinkage = Number(entry.shrinkageMeters || 0);
+        running = Number((running + credit - debit - shrinkage).toFixed(2));
+
+        if (Number(entry.runningBalance) !== running) {
+          await tx.fabricLedgerEntry.update({
+            where: { id: entry.id },
+            data: { runningBalance: running },
+          });
+        }
+      }
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/ledger");
+    return {
+      success: true,
+      message: `Inward Receipt ${existing.igpNumber} updated. Audit recorded and party ledger reconciled.`,
+    };
+  } catch (err: any) {
+    console.error("Update inward error:", err);
+    return { error: err.message || "Failed to update inward receipt." };
+  }
+}
+
+// -----------------------------------------------------------------------------
 // 2. OUTSOURCE DYEING / PRINTING: DISPATCH TO VENDOR (OGP)
 // -----------------------------------------------------------------------------
 const OutsourceDispatchSchema = z.object({

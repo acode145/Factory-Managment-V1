@@ -71,7 +71,9 @@ model FabricInward {
   remarks          String?
   receivedById     String
   receivedBy       User              @relation("UserInwards", fields: [receivedById], references: [id])
+  editHistory      Json?             @default("[]")
   createdAt        DateTime          @default(now())
+  updatedAt        DateTime?         @updatedAt
 
   outsourceBatches OutsourceBatch[]
   deliveries       DeliveryChallanItem[]
@@ -102,6 +104,9 @@ model OutsourceBatch {
   receivedById     String?
   receivedBy       User?             @relation("ReceivedByUser", fields: [receivedById], references: [id])
   remarks          String?
+  editHistory      Json?             @default("[]")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime?         @updatedAt
 }
 
 model DeliveryChallan {
@@ -116,7 +121,9 @@ model DeliveryChallan {
   dispatchedById   String
   dispatchedBy     User              @relation("UserDispatches", fields: [dispatchedById], references: [id])
   remarks          String?
+  editHistory      Json?             @default("[]")
   createdAt        DateTime          @default(now())
+  updatedAt        DateTime?         @updatedAt
 
   items            DeliveryChallanItem[]
 }

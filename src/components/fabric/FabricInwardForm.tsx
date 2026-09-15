@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { createPartyInwardAction, FabricActionState } from "@/actions/fabric";
 import { PackagePlus, AlertTriangle, CheckCircle2, ArrowDownLeft } from "lucide-react";
+import { metersToYards } from "@/lib/units";
 
 interface PartyOption {
   id: string;
@@ -147,7 +148,14 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                 placeholder="e.g. 10000.00"
                 className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               />
-              <span className="text-[11px] text-zinc-500 mt-0.5 block">Printed on client delivery slip</span>
+              <div className="flex items-center justify-between text-[11px] mt-1">
+                <span className="text-zinc-500">Printed on client delivery slip</span>
+                {numChallan > 0 && (
+                  <span className="font-mono font-semibold text-zinc-700 bg-zinc-200/70 px-1.5 py-0.5 rounded text-[10px]">
+                    ≈ {metersToYards(numChallan).toLocaleString()} yds
+                  </span>
+                )}
+              </div>
             </div>
 
             <div>
@@ -165,27 +173,34 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                 placeholder="e.g. 9900.00"
                 className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               />
-              <span className="text-[11px] text-zinc-500 mt-0.5 block">Staff measurement at receiving dock</span>
+              <div className="flex items-center justify-between text-[11px] mt-1">
+                <span className="text-zinc-500">Staff measurement at receiving dock</span>
+                {numMeasured > 0 && (
+                  <span className="font-mono font-semibold text-zinc-700 bg-zinc-200/70 px-1.5 py-0.5 rounded text-[10px]">
+                    ≈ {metersToYards(numMeasured).toLocaleString()} yds
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Shortage Alert Badge */}
           {numChallan > 0 && numMeasured > 0 && (
-            <div className="pt-2 border-t border-zinc-200/80 flex items-center justify-between text-xs">
+            <div className="pt-2 border-t border-zinc-200/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 text-xs">
               <span className="text-zinc-600 font-medium">Inward Discrepancy Status:</span>
               {shortage > 0 ? (
-                <span className="font-mono font-bold px-2.5 py-1 rounded bg-rose-50 text-rose-800 border border-rose-200 inline-flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                  SHORTAGE DETECTED: -{shortage.toFixed(2)}m
+                <span className="font-mono font-bold px-2.5 py-1 rounded bg-rose-50 text-rose-800 border border-rose-200 inline-flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>SHORTAGE: -{shortage.toFixed(2)}m (-{metersToYards(shortage).toFixed(2)} yds)</span>
                 </span>
               ) : shortage < 0 ? (
-                <span className="font-mono font-bold px-2.5 py-1 rounded bg-blue-50 text-blue-800 border border-blue-200 inline-flex items-center gap-1">
-                  EXCESS RECEIVED: +{Math.abs(shortage).toFixed(2)}m
+                <span className="font-mono font-bold px-2.5 py-1 rounded bg-blue-50 text-blue-800 border border-blue-200 inline-flex items-center gap-1.5">
+                  <span>EXCESS: +{Math.abs(shortage).toFixed(2)}m (+{metersToYards(Math.abs(shortage)).toFixed(2)} yds)</span>
                 </span>
               ) : (
-                <span className="font-mono font-bold px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  EXACT MATCH (0.00m)
+                <span className="font-mono font-bold px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>EXACT MATCH (0.00m / 0.00 yds)</span>
                 </span>
               )}
             </div>
