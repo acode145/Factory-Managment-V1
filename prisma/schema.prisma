@@ -153,4 +153,5 @@ model FabricLedgerEntry {
   runningBalance   Decimal           @db.Decimal(10, 2)
   timestamp        DateTime          @default(now())
   notes            String?
+  createdAt        DateTime          @default(now())
 }

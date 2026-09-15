@@ -12,6 +12,61 @@ function generateCode(prefix: string) {
   return `${prefix}-${timestamp}${random}`;
 }
 
+/**
+ * Deterministic business date & sequence parser for factory transactions.
+ * Sequence offsets ensure proper intra-day chronology on the same calendar date:
+ * 0: PARTY_INWARD (+Deposit)
+ * 1: INWARD_SHORTAGE (-Dock loss)
+ * 2: OUTWARD_TO_VENDOR (-Outsource dispatch)
+ * 3: INWARD_FROM_VENDOR (+Vendor return)
+ * 4: DELIVERY_TO_PARTY (-Customer delivery)
+ * 5: GENERAL ADJUSTMENT
+ */
+function parseLedgerDate(dateStr?: string, sequenceOffsetSeconds = 0): Date {
+  if (!dateStr) {
+    const d = new Date();
+    if (sequenceOffsetSeconds) {
+      d.setSeconds(d.getSeconds() + sequenceOffsetSeconds);
+    }
+    return d;
+  }
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    const [year, month, day] = parts.map(Number);
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, sequenceOffsetSeconds, 0));
+  }
+  return new Date();
+}
+
+/**
+ * Recalculate and synchronize all running balances for a party in strict chronological order.
+ */
+export async function reconcilePartyLedger(tx: any, partyId: string) {
+  const allEntries = await tx.fabricLedgerEntry.findMany({
+    where: { partyId },
+    orderBy: [
+      { timestamp: "asc" },
+      { createdAt: "asc" },
+      { id: "asc" },
+    ],
+  });
+
+  let running = 0;
+  for (const entry of allEntries) {
+    const credit = Number(entry.creditMeters || 0);
+    const debit = Number(entry.debitMeters || 0);
+    const shrinkage = Number(entry.shrinkageMeters || 0);
+    running = Number((running + credit - debit - shrinkage).toFixed(2));
+
+    if (Number(entry.runningBalance) !== running) {
+      await tx.fabricLedgerEntry.update({
+        where: { id: entry.id },
+        data: { runningBalance: running },
+      });
+    }
+  }
+}
+
 export type FabricActionState = {
   error?: string;
   success?: boolean;
@@ -72,7 +127,8 @@ export async function createPartyInwardAction(
     remarks,
   } = parsed.data;
 
-  const dateObj = challanDate ? new Date(challanDate + "T12:00:00.000Z") : new Date();
+  const dateClaimed = parseLedgerDate(challanDate, 0);
+  const dateShortage = parseLedgerDate(challanDate, 1);
   const shortageMeters = Number((challanMeters - measuredMeters).toFixed(2));
   const igpNumber = generateCode("IGP");
 
@@ -90,23 +146,14 @@ export async function createPartyInwardAction(
           challanMeters,
           measuredMeters,
           shortageMeters,
-          challanDate: dateObj,
+          challanDate: dateClaimed,
           driverDetails,
           remarks,
           receivedById: session.userId,
         },
       });
 
-      // 2. Fetch last running balance for this party
-      const lastEntry = await tx.fabricLedgerEntry.findFirst({
-        where: { partyId },
-        orderBy: { timestamp: "desc" },
-      });
-
-      const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-
-      // 3. Row 1: Gross Claimed Party Inward (+10,000m)
-      const balanceAfterClaimed = Number((currentBalance + challanMeters).toFixed(2));
+      // 2. Row 1: Gross Claimed Party Inward (+Claimed Meters)
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
@@ -115,15 +162,14 @@ export async function createPartyInwardAction(
           creditMeters: challanMeters,
           debitMeters: 0,
           shrinkageMeters: 0,
-          runningBalance: balanceAfterClaimed,
-          timestamp: dateObj,
+          runningBalance: 0, // Computed by reconcilePartyLedger
+          timestamp: dateClaimed,
           notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType})`,
         },
       });
 
-      // 4. Row 2: Dock Measurement Shortage Deduction (-150m in Shrinkage column), if shortage > 0
+      // 3. Row 2: Dock Measurement Shortage Deduction (-Shortage in Shrinkage column), if shortage > 0
       if (shortageMeters > 0) {
-        const balanceAfterShortage = Number((balanceAfterClaimed - shortageMeters).toFixed(2));
         await tx.fabricLedgerEntry.create({
           data: {
             partyId,
@@ -132,12 +178,15 @@ export async function createPartyInwardAction(
             creditMeters: 0,
             debitMeters: 0,
             shrinkageMeters: shortageMeters,
-            runningBalance: balanceAfterShortage,
-            timestamp: new Date(dateObj.getTime() + 1000), // Chronologically right after Row 1
+            runningBalance: 0, // Computed by reconcilePartyLedger
+            timestamp: dateShortage,
             notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${shortageMeters.toFixed(2)}m)`,
           },
         });
       }
+
+      // 4. Synchronize all running balances chronologically
+      await reconcilePartyLedger(tx, partyId);
 
       return inward;
     });
@@ -209,7 +258,8 @@ export async function updateFabricInwardAction(
     remarks,
   } = parsed.data;
 
-  const dateObj = challanDate ? new Date(challanDate + "T12:00:00.000Z") : new Date();
+  const dateClaimed = parseLedgerDate(challanDate, 0);
+  const dateShortage = parseLedgerDate(challanDate, 1);
   const newShortage = Number((challanMeters - measuredMeters).toFixed(2));
 
   try {
@@ -260,7 +310,7 @@ export async function updateFabricInwardAction(
       await tx.fabricInward.update({
         where: { id: inwardId },
         data: {
-          challanDate: dateObj,
+          challanDate: dateClaimed,
           partyChallanNo,
           fabricType,
           colorShade,
@@ -288,7 +338,7 @@ export async function updateFabricInwardAction(
           where: { id: inwardEntry.id },
           data: {
             creditMeters: challanMeters,
-            timestamp: dateObj,
+            timestamp: dateClaimed,
             notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}) [Edited]`,
           },
         });
@@ -309,7 +359,7 @@ export async function updateFabricInwardAction(
             where: { id: shortageEntry.id },
             data: {
               shrinkageMeters: newShortage,
-              timestamp: new Date(dateObj.getTime() + 1000),
+              timestamp: dateShortage,
               notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
             },
           });
@@ -322,8 +372,8 @@ export async function updateFabricInwardAction(
               creditMeters: 0,
               debitMeters: 0,
               shrinkageMeters: newShortage,
-              runningBalance: 0, // Will be recalculated below
-              timestamp: new Date(dateObj.getTime() + 1000),
+              runningBalance: 0,
+              timestamp: dateShortage,
               notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
             },
           });
@@ -335,26 +385,8 @@ export async function updateFabricInwardAction(
         });
       }
 
-      // 4. Reconcile all subsequent running balances for this party
-      const allEntries = await tx.fabricLedgerEntry.findMany({
-        where: { partyId: existing.partyId },
-        orderBy: { timestamp: "asc" },
-      });
-
-      let running = 0;
-      for (const entry of allEntries) {
-        const credit = Number(entry.creditMeters || 0);
-        const debit = Number(entry.debitMeters || 0);
-        const shrinkage = Number(entry.shrinkageMeters || 0);
-        running = Number((running + credit - debit - shrinkage).toFixed(2));
-
-        if (Number(entry.runningBalance) !== running) {
-          await tx.fabricLedgerEntry.update({
-            where: { id: entry.id },
-            data: { runningBalance: running },
-          });
-        }
-      }
+      // 4. Synchronize all running balances chronologically
+      await reconcilePartyLedger(tx, existing.partyId);
     });
 
     revalidatePath("/dashboard");
@@ -404,7 +436,7 @@ export async function createOutsourceDispatchAction(
   }
 
   const { sentDate, partyId, vendorId, inwardId, processType, targetShade, sentMeters } = parsed.data;
-  const dateObj = sentDate ? new Date(sentDate + "T12:00:00.000Z") : new Date();
+  const dateDispatch = parseLedgerDate(sentDate, 2);
   const ogpNumber = generateCode("OGP");
 
   try {
@@ -413,7 +445,11 @@ export async function createOutsourceDispatchAction(
       prisma.vendor.findUnique({ where: { id: vendorId } }),
       prisma.fabricLedgerEntry.findFirst({
         where: { partyId },
-        orderBy: { timestamp: "desc" },
+        orderBy: [
+          { timestamp: "desc" },
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
       }),
     ]);
 
@@ -438,14 +474,13 @@ export async function createOutsourceDispatchAction(
           processType,
           targetShade,
           sentMeters,
-          sentDate: dateObj,
+          sentDate: dateDispatch,
           sentById: session.userId,
           status: "WITH_VENDOR",
         },
       });
 
       // 2. Post Outward Dispatch Entry to Party Fabric Ledger
-      const newBalance = Number((currentBalance - sentMeters).toFixed(2));
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
@@ -454,11 +489,14 @@ export async function createOutsourceDispatchAction(
           creditMeters: 0,
           debitMeters: sentMeters,
           shrinkageMeters: 0,
-          runningBalance: newBalance,
-          timestamp: dateObj,
+          runningBalance: 0, // Computed by reconcilePartyLedger
+          timestamp: dateDispatch,
           notes: `Dispatched to ${vendor.name} for ${processType} (Target: ${targetShade})`,
         },
       });
+
+      // 3. Synchronize all running balances chronologically
+      await reconcilePartyLedger(tx, partyId);
     });
 
     revalidatePath("/dashboard");
@@ -505,7 +543,7 @@ export async function returnOutsourceBatchAction(
   }
 
   const { batchId, receivedDate, vendorChallanNo, receivedMeters, remarks } = parsed.data;
-  const dateObj = receivedDate ? new Date(receivedDate + "T12:00:00.000Z") : new Date();
+  const dateReturn = parseLedgerDate(receivedDate, 3);
 
   try {
     const batch = await prisma.outsourceBatch.findUnique({
@@ -531,26 +569,16 @@ export async function returnOutsourceBatchAction(
           receivedMeters,
           shrinkageMeters,
           shrinkagePercent,
-          receivedDate: dateObj,
+          receivedDate: dateReturn,
           receivedById: session.userId,
           remarks,
         },
       });
 
-      // 2. Fetch last running balance for this party
-      const lastEntry = await tx.fabricLedgerEntry.findFirst({
-        where: { partyId: batch.partyId },
-        orderBy: { timestamp: "desc" },
-      });
-
-      const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-      // Net custody stock increases by physical meters received back (+receivedMeters)
-      const newBalance = Number((currentBalance + receivedMeters).toFixed(2));
-
-      // 3. Option A Ledger Entry:
+      // 2. Option A Ledger Entry:
       // Inward (+) receives gross sentMeters (+5,000m)
       // Shrinkage (-) deducts process loss (-300m)
-      // Net running balance = currentBalance + 5,000m - 300m = currentBalance + 4,700m!
+      // Net custody balance increases by +receivedMeters!
       await tx.fabricLedgerEntry.create({
         data: {
           partyId: batch.partyId,
@@ -559,32 +587,14 @@ export async function returnOutsourceBatchAction(
           creditMeters: sentMeters,
           debitMeters: 0,
           shrinkageMeters: shrinkageMeters > 0 ? shrinkageMeters : 0,
-          runningBalance: newBalance,
-          timestamp: dateObj,
+          runningBalance: 0, // Computed by reconcilePartyLedger
+          timestamp: dateReturn,
           notes: `Received from ${batch.vendor.name} Challan #${vendorChallanNo} (${batch.processType}, ${batch.targetShade}). Received: ${receivedMeters.toFixed(2)}m | Technical Shrinkage: ${shrinkageMeters.toFixed(2)}m (${shrinkagePercent.toFixed(2)}%)`,
         },
       });
 
-      // 4. Reconcile all subsequent running balances for this party
-      const allEntries = await tx.fabricLedgerEntry.findMany({
-        where: { partyId: batch.partyId },
-        orderBy: { timestamp: "asc" },
-      });
-
-      let running = 0;
-      for (const entry of allEntries) {
-        const credit = Number(entry.creditMeters || 0);
-        const debit = Number(entry.debitMeters || 0);
-        const shrinkage = Number(entry.shrinkageMeters || 0);
-        running = Number((running + credit - debit - shrinkage).toFixed(2));
-
-        if (Number(entry.runningBalance) !== running) {
-          await tx.fabricLedgerEntry.update({
-            where: { id: entry.id },
-            data: { runningBalance: running },
-          });
-        }
-      }
+      // 3. Synchronize all running balances chronologically
+      await reconcilePartyLedger(tx, batch.partyId);
     });
 
     revalidatePath("/dashboard");
@@ -637,6 +647,7 @@ export async function createDeliveryChallanAction(
   const { partyId, fabricType, colorShade, totalRolls, totalMeters, vehicleDriver, remarks } =
     parsed.data;
 
+  const dateDelivery = parseLedgerDate(undefined, 4);
   const challanNumber = generateCode("DC");
 
   try {
@@ -662,16 +673,7 @@ export async function createDeliveryChallanAction(
         },
       });
 
-      // 2. Calculate new running balance for Party
-      const lastEntry = await tx.fabricLedgerEntry.findFirst({
-        where: { partyId },
-        orderBy: { timestamp: "desc" },
-      });
-
-      const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-      const newBalance = Number((currentBalance - totalMeters).toFixed(2));
-
-      // 3. Post Debit to Party Fabric Ledger
+      // 2. Post Debit to Party Fabric Ledger
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
@@ -680,10 +682,14 @@ export async function createDeliveryChallanAction(
           creditMeters: 0,
           debitMeters: totalMeters,
           shrinkageMeters: 0,
-          runningBalance: newBalance,
+          runningBalance: 0, // Computed by reconcilePartyLedger
+          timestamp: dateDelivery,
           notes: `Dispatched on Delivery Challan #${challanNumber} (${totalRolls} rolls of ${colorShade} ${fabricType})`,
         },
       });
+
+      // 3. Synchronize all running balances chronologically
+      await reconcilePartyLedger(tx, partyId);
 
       return challan;
     });

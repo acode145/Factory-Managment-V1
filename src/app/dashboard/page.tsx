@@ -60,7 +60,11 @@ export default async function DashboardPage({
       },
     }),
     prisma.fabricLedgerEntry.findMany({
-      orderBy: { timestamp: "desc" },
+      orderBy: [
+        { timestamp: "desc" },
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
     }),
   ]);
 
