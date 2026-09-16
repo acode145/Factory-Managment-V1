@@ -55,6 +55,7 @@ export async function reconcilePartyLedger(tx: any, partyId: string) {
 
   let runningMeters = 0;
   let runningPieces = 0;
+  const updateFns: (() => Promise<any>)[] = [];
 
   for (const entry of allEntries) {
     if (entry.itemCategory === "PIECES") {
@@ -64,10 +65,13 @@ export async function reconcilePartyLedger(tx: any, partyId: string) {
       runningPieces = runningPieces + credit - debit - shortage;
 
       if (entry.runningPieces !== runningPieces) {
-        await tx.fabricLedgerEntry.update({
-          where: { id: entry.id },
-          data: { runningPieces },
-        });
+        const targetPieces = runningPieces;
+        updateFns.push(() =>
+          tx.fabricLedgerEntry.update({
+            where: { id: entry.id },
+            data: { runningPieces: targetPieces },
+          })
+        );
       }
     } else {
       // CONTINUOUS fabric
@@ -77,12 +81,21 @@ export async function reconcilePartyLedger(tx: any, partyId: string) {
       runningMeters = Number((runningMeters + credit - debit - shrinkage).toFixed(2));
 
       if (Number(entry.runningBalance) !== runningMeters) {
-        await tx.fabricLedgerEntry.update({
-          where: { id: entry.id },
-          data: { runningBalance: runningMeters },
-        });
+        const targetBalance = runningMeters;
+        updateFns.push(() =>
+          tx.fabricLedgerEntry.update({
+            where: { id: entry.id },
+            data: { runningBalance: targetBalance },
+          })
+        );
       }
     }
+  }
+
+  // Execute updates in parallel chunks of 5 for speed without overwhelming connection pool
+  for (let i = 0; i < updateFns.length; i += 5) {
+    const chunk = updateFns.slice(i, i + 5);
+    await Promise.all(chunk.map((fn) => fn()));
   }
 }
 
@@ -216,6 +229,21 @@ export async function createPartyInwardAction(
         },
       });
 
+      // Query latest running balances for this party so newly created entries already have the correct running balances
+      const lastContEntry = await tx.fabricLedgerEntry.findFirst({
+        where: { partyId, itemCategory: "CONTINUOUS" },
+        orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        select: { runningBalance: true },
+      });
+      let currentRunningBalance = Number(lastContEntry?.runningBalance || 0);
+
+      const lastPieceEntry = await tx.fabricLedgerEntry.findFirst({
+        where: { partyId, itemCategory: "PIECES" },
+        orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        select: { runningPieces: true },
+      });
+      let currentRunningPieces = Number(lastPieceEntry?.runningPieces || 0);
+
       for (let idx = 0; idx < itemsToCreate.length; idx++) {
         const item = itemsToCreate[idx];
         const shortageQty = Number((item.challanQty - item.measuredQty).toFixed(2));
@@ -250,6 +278,7 @@ export async function createPartyInwardAction(
         });
 
         if (item.unit === "PIECES") {
+          currentRunningPieces += Math.round(item.challanQty);
           await tx.fabricLedgerEntry.create({
             data: {
               partyId,
@@ -267,13 +296,14 @@ export async function createPartyInwardAction(
               creditPieces: Math.round(item.challanQty),
               debitPieces: 0,
               shortagePieces: 0,
-              runningPieces: 0,
+              runningPieces: currentRunningPieces,
               timestamp: dateClaimed,
               notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs]`,
             },
           });
 
           if (shortageQty > 0) {
+            currentRunningPieces -= Math.round(shortageQty);
             await tx.fabricLedgerEntry.create({
               data: {
                 partyId,
@@ -291,13 +321,14 @@ export async function createPartyInwardAction(
                 creditPieces: 0,
                 debitPieces: 0,
                 shortagePieces: Math.round(shortageQty),
-                runningPieces: 0,
+                runningPieces: currentRunningPieces,
                 timestamp: dateShortage,
                 notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (-${Math.round(shortageQty)} pcs)`,
               },
             });
           } else if (shortageQty < 0) {
             const surplusPieces = Math.round(Math.abs(shortageQty));
+            currentRunningPieces += surplusPieces;
             await tx.fabricLedgerEntry.create({
               data: {
                 partyId,
@@ -315,7 +346,7 @@ export async function createPartyInwardAction(
                 creditPieces: surplusPieces,
                 debitPieces: 0,
                 shortagePieces: 0,
-                runningPieces: 0,
+                runningPieces: currentRunningPieces,
                 timestamp: dateShortage,
                 notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (+${surplusPieces} pcs)`,
               },
@@ -325,6 +356,7 @@ export async function createPartyInwardAction(
           const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
           const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
 
+          currentRunningBalance = Number((currentRunningBalance + stdClaimed).toFixed(2));
           await tx.fabricLedgerEntry.create({
             data: {
               partyId,
@@ -339,13 +371,14 @@ export async function createPartyInwardAction(
               creditMeters: stdClaimed,
               debitMeters: 0,
               shrinkageMeters: 0,
-              runningBalance: 0,
+              runningBalance: currentRunningBalance,
               timestamp: dateClaimed,
               notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}]`,
             },
           });
 
           if (shortageQty > 0) {
+            currentRunningBalance = Number((currentRunningBalance - stdShortage).toFixed(2));
             await tx.fabricLedgerEntry.create({
               data: {
                 partyId,
@@ -360,13 +393,14 @@ export async function createPartyInwardAction(
                 creditMeters: 0,
                 debitMeters: 0,
                 shrinkageMeters: stdShortage,
-                runningBalance: 0,
+                runningBalance: currentRunningBalance,
                 timestamp: dateShortage,
                 notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (-${shortageQty}${unitSuffix})`,
               },
             });
           } else if (shortageQty < 0) {
             const surplusQty = Number(Math.abs(shortageQty).toFixed(2));
+            currentRunningBalance = Number((currentRunningBalance + stdSurplus).toFixed(2));
             await tx.fabricLedgerEntry.create({
               data: {
                 partyId,
@@ -381,7 +415,7 @@ export async function createPartyInwardAction(
                 creditMeters: stdSurplus,
                 debitMeters: 0,
                 shrinkageMeters: 0,
-                runningBalance: 0,
+                runningBalance: currentRunningBalance,
                 timestamp: dateShortage,
                 notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (+${surplusQty}${unitSuffix})`,
               },
@@ -392,7 +426,7 @@ export async function createPartyInwardAction(
 
       await reconcilePartyLedger(tx, partyId);
       return inward;
-    });
+    }, { maxWait: 15000, timeout: 45000 });
 
     revalidatePath("/dashboard");
     revalidatePath("/ledger");
@@ -641,7 +675,7 @@ export async function updateFabricInwardAction(
       }
 
       await reconcilePartyLedger(tx, existing.partyId);
-    });
+    }, { maxWait: 15000, timeout: 45000 });
 
     revalidatePath("/dashboard");
     revalidatePath("/ledger");
@@ -803,7 +837,7 @@ export async function createOutsourceDispatchAction(
       for (const pId of partyIds) {
         await reconcilePartyLedger(tx, pId);
       }
-    });
+    }, { maxWait: 15000, timeout: 45000 });
 
     revalidatePath("/dashboard");
     revalidatePath("/outsource");
@@ -947,7 +981,7 @@ export async function returnOutsourceBatchAction(
       });
 
       await reconcilePartyLedger(tx, batch.partyId);
-    });
+    }, { maxWait: 15000, timeout: 45000 });
 
     revalidatePath("/dashboard");
     revalidatePath("/outsource");
@@ -1061,7 +1095,7 @@ export async function createDeliveryChallanAction(
 
       await reconcilePartyLedger(tx, partyId);
       return challan;
-    });
+    }, { maxWait: 15000, timeout: 45000 });
 
     revalidatePath("/dashboard");
     revalidatePath("/deliveries");
