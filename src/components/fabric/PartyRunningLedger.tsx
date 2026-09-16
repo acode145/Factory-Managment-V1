@@ -93,10 +93,10 @@ export default function PartyRunningLedger({
 
   // 1. Total Deposited
   const contDeposited = continuousEntries
-    .filter((e) => e.movementType === "PARTY_INWARD")
+    .filter((e) => e.movementType === "PARTY_INWARD" || e.movementType === "INWARD_SURPLUS")
     .reduce((acc, curr) => acc + Number(curr.creditMeters || 0), 0);
   const piecesDeposited = piecesEntries
-    .filter((e) => e.movementType === "PARTY_INWARD")
+    .filter((e) => e.movementType === "PARTY_INWARD" || e.movementType === "INWARD_SURPLUS")
     .reduce((acc, curr) => acc + (curr.creditPieces || 0), 0);
 
   // 2. Delivered to Party

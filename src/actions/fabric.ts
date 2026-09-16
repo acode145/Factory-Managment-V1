@@ -222,13 +222,16 @@ export async function createPartyInwardAction(
 
         let stdMeters: number | null = null;
         let stdShortage: number = 0;
+        let stdSurplus: number = 0;
 
         if (item.unit === "YARDS") {
           stdMeters = yardsToMeters(item.measuredQty);
           stdShortage = shortageQty > 0 ? yardsToMeters(shortageQty) : 0;
+          stdSurplus = shortageQty < 0 ? yardsToMeters(Math.abs(shortageQty)) : 0;
         } else if (item.unit === "METERS") {
           stdMeters = item.measuredQty;
           stdShortage = shortageQty > 0 ? shortageQty : 0;
+          stdSurplus = shortageQty < 0 ? Math.abs(shortageQty) : 0;
         }
 
         const inwardItem = await tx.fabricInwardItem.create({
@@ -293,6 +296,30 @@ export async function createPartyInwardAction(
                 notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (-${Math.round(shortageQty)} pcs)`,
               },
             });
+          } else if (shortageQty < 0) {
+            const surplusPieces = Math.round(Math.abs(shortageQty));
+            await tx.fabricLedgerEntry.create({
+              data: {
+                partyId,
+                partyChallanNo,
+                inwardId: inward.id,
+                inwardItemId: inwardItem.id,
+                itemCategory: "PIECES",
+                fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                unit: "PIECES",
+                movementType: "INWARD_SURPLUS",
+                referenceNumber: igpNumber,
+                creditMeters: 0,
+                debitMeters: 0,
+                shrinkageMeters: 0,
+                creditPieces: surplusPieces,
+                debitPieces: 0,
+                shortagePieces: 0,
+                runningPieces: 0,
+                timestamp: dateShortage,
+                notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (+${surplusPieces} pcs)`,
+              },
+            });
           }
         } else {
           const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
@@ -336,6 +363,27 @@ export async function createPartyInwardAction(
                 runningBalance: 0,
                 timestamp: dateShortage,
                 notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (-${shortageQty}${unitSuffix})`,
+              },
+            });
+          } else if (shortageQty < 0) {
+            const surplusQty = Number(Math.abs(shortageQty).toFixed(2));
+            await tx.fabricLedgerEntry.create({
+              data: {
+                partyId,
+                partyChallanNo,
+                inwardId: inward.id,
+                inwardItemId: inwardItem.id,
+                itemCategory: "CONTINUOUS",
+                fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                unit: item.unit,
+                movementType: "INWARD_SURPLUS",
+                referenceNumber: igpNumber,
+                creditMeters: stdSurplus,
+                debitMeters: 0,
+                shrinkageMeters: 0,
+                runningBalance: 0,
+                timestamp: dateShortage,
+                notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (+${surplusQty}${unitSuffix})`,
               },
             });
           }
@@ -506,7 +554,18 @@ export async function updateFabricInwardAction(
         },
       });
 
+      const surplusEntry = await tx.fabricLedgerEntry.findFirst({
+        where: {
+          partyId: existing.partyId,
+          referenceNumber: existing.igpNumber,
+          movementType: "INWARD_SURPLUS",
+        },
+      });
+
       if (newShortage > 0) {
+        if (surplusEntry) {
+          await tx.fabricLedgerEntry.delete({ where: { id: surplusEntry.id } });
+        }
         if (shortageEntry) {
           await tx.fabricLedgerEntry.update({
             where: { id: shortageEntry.id },
@@ -535,10 +594,50 @@ export async function updateFabricInwardAction(
             },
           });
         }
-      } else if (shortageEntry) {
-        await tx.fabricLedgerEntry.delete({
-          where: { id: shortageEntry.id },
-        });
+      } else if (newShortage < 0) {
+        const surplusMeters = Number(Math.abs(newShortage).toFixed(2));
+        if (shortageEntry) {
+          await tx.fabricLedgerEntry.delete({ where: { id: shortageEntry.id } });
+        }
+        if (surplusEntry) {
+          await tx.fabricLedgerEntry.update({
+            where: { id: surplusEntry.id },
+            data: {
+              creditMeters: surplusMeters,
+              partyChallanNo,
+              inwardId: existing.id,
+              timestamp: dateShortage,
+              notes: `Inward Surplus: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (+${surplusMeters.toFixed(2)}m) [Edited]`,
+            },
+          });
+        } else {
+          await tx.fabricLedgerEntry.create({
+            data: {
+              partyId: existing.partyId,
+              partyChallanNo,
+              inwardId: existing.id,
+              movementType: "INWARD_SURPLUS",
+              referenceNumber: existing.igpNumber,
+              creditMeters: surplusMeters,
+              debitMeters: 0,
+              shrinkageMeters: 0,
+              runningBalance: 0,
+              timestamp: dateShortage,
+              notes: `Inward Surplus: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (+${surplusMeters.toFixed(2)}m) [Edited]`,
+            },
+          });
+        }
+      } else {
+        if (shortageEntry) {
+          await tx.fabricLedgerEntry.delete({
+            where: { id: shortageEntry.id },
+          });
+        }
+        if (surplusEntry) {
+          await tx.fabricLedgerEntry.delete({
+            where: { id: surplusEntry.id },
+          });
+        }
       }
 
       await reconcilePartyLedger(tx, existing.partyId);
