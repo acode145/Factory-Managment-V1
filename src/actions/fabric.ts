@@ -134,7 +134,7 @@ export async function createPartyInwardAction(
 
   try {
     await prisma.$transaction(async (tx: any) => {
-      // 1. Create Inward Record (saves user-chosen challanDate, system createdAt auto)
+      // 1. Create Inward Record
       const inward = await tx.fabricInward.create({
         data: {
           igpNumber,
@@ -153,10 +153,12 @@ export async function createPartyInwardAction(
         },
       });
 
-      // 2. Row 1: Gross Claimed Party Inward (+Claimed Meters)
+      // 2. Row 1: Gross Claimed Party Inward (+Claimed Meters) tagged with partyChallanNo and inwardId
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
+          partyChallanNo,
+          inwardId: inward.id,
           movementType: "PARTY_INWARD",
           referenceNumber: igpNumber,
           creditMeters: challanMeters,
@@ -173,6 +175,8 @@ export async function createPartyInwardAction(
         await tx.fabricLedgerEntry.create({
           data: {
             partyId,
+            partyChallanNo,
+            inwardId: inward.id,
             movementType: "INWARD_SHORTAGE",
             referenceNumber: igpNumber,
             creditMeters: 0,
@@ -338,6 +342,8 @@ export async function updateFabricInwardAction(
           where: { id: inwardEntry.id },
           data: {
             creditMeters: challanMeters,
+            partyChallanNo,
+            inwardId: existing.id,
             timestamp: dateClaimed,
             notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}) [Edited]`,
           },
@@ -359,6 +365,8 @@ export async function updateFabricInwardAction(
             where: { id: shortageEntry.id },
             data: {
               shrinkageMeters: newShortage,
+              partyChallanNo,
+              inwardId: existing.id,
               timestamp: dateShortage,
               notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
             },
@@ -367,6 +375,8 @@ export async function updateFabricInwardAction(
           await tx.fabricLedgerEntry.create({
             data: {
               partyId: existing.partyId,
+              partyChallanNo,
+              inwardId: existing.id,
               movementType: "INWARD_SHORTAGE",
               referenceNumber: existing.igpNumber,
               creditMeters: 0,
@@ -379,7 +389,6 @@ export async function updateFabricInwardAction(
           });
         }
       } else if (shortageEntry) {
-        // If shortage was revised to zero/surplus, remove shortage deduction
         await tx.fabricLedgerEntry.delete({
           where: { id: shortageEntry.id },
         });
@@ -403,15 +412,20 @@ export async function updateFabricInwardAction(
 
 // -----------------------------------------------------------------------------
 // 2. OUTSOURCE DYEING / PRINTING: DISPATCH TO VENDOR (OGP)
+// Supports both Multi-Item Lot Dispatches (Header + Rows) and Single-Item Fallbacks
 // -----------------------------------------------------------------------------
-const OutsourceDispatchSchema = z.object({
-  sentDate: z.string().optional(),
+const OutsourceItemSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
-  vendorId: z.string().min(1, "Dyeing / Printing vendor is required"),
   inwardId: z.string().optional(),
   processType: z.string().default("SOLID_DYEING"),
   targetShade: z.string().trim().min(1, "Target color / shade specification is required"),
   sentMeters: z.coerce.number().positive("Sent meters must be positive"),
+});
+
+const OutsourceDispatchSchema = z.object({
+  sentDate: z.string().optional(),
+  vendorId: z.string().min(1, "Dyeing / Printing vendor is required"),
+  remarks: z.string().optional(),
 });
 
 export async function createOutsourceDispatchAction(
@@ -420,91 +434,149 @@ export async function createOutsourceDispatchAction(
 ): Promise<FabricActionState> {
   const session = await requireAuth();
 
-  const rawData = {
-    sentDate: formData.get("sentDate") || undefined,
-    partyId: formData.get("partyId"),
-    vendorId: formData.get("vendorId"),
-    inwardId: formData.get("inwardId") || undefined,
-    processType: formData.get("processType"),
-    targetShade: formData.get("targetShade"),
-    sentMeters: formData.get("sentMeters"),
-  };
+  const sentDate = (formData.get("sentDate") as string) || undefined;
+  const vendorId = (formData.get("vendorId") as string) || "";
+  const remarks = (formData.get("remarks") as string) || undefined;
 
-  const parsed = OutsourceDispatchSchema.safeParse(rawData);
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0].message };
+  const headerParsed = OutsourceDispatchSchema.safeParse({ sentDate, vendorId, remarks });
+  if (!headerParsed.success) {
+    return { error: headerParsed.error.issues[0].message };
   }
 
-  const { sentDate, partyId, vendorId, inwardId, processType, targetShade, sentMeters } = parsed.data;
+  // Parse items from either itemsPayload JSON (Multi-Lot Table) or standard form fields (Single Lot)
+  let itemsToDispatch: Array<z.infer<typeof OutsourceItemSchema>> = [];
+  const itemsPayloadStr = formData.get("itemsPayload") as string | null;
+
+  if (itemsPayloadStr) {
+    try {
+      const parsedArray = JSON.parse(itemsPayloadStr);
+      if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
+        return { error: "Please add at least one lot / challan item to dispatch." };
+      }
+      for (let i = 0; i < parsedArray.length; i++) {
+        const itemResult = OutsourceItemSchema.safeParse(parsedArray[i]);
+        if (!itemResult.success) {
+          return { error: `Item ${i + 1}: ${itemResult.error.issues[0].message}` };
+        }
+        itemsToDispatch.push(itemResult.data);
+      }
+    } catch {
+      return { error: "Invalid lot items payload submitted." };
+    }
+  } else {
+    // Single-item fallback
+    const singleRaw = {
+      partyId: formData.get("partyId"),
+      inwardId: formData.get("inwardId") || undefined,
+      processType: formData.get("processType") || "SOLID_DYEING",
+      targetShade: formData.get("targetShade"),
+      sentMeters: formData.get("sentMeters"),
+    };
+    const singleParsed = OutsourceItemSchema.safeParse(singleRaw);
+    if (!singleParsed.success) {
+      return { error: singleParsed.error.issues[0].message };
+    }
+    itemsToDispatch.push(singleParsed.data);
+  }
+
   const dateDispatch = parseLedgerDate(sentDate, 2);
   const ogpNumber = generateCode("OGP");
 
   try {
-    const [party, vendor, lastEntry] = await Promise.all([
-      prisma.party.findUnique({ where: { id: partyId } }),
-      prisma.vendor.findUnique({ where: { id: vendorId } }),
-      prisma.fabricLedgerEntry.findFirst({
-        where: { partyId },
-        orderBy: [
-          { timestamp: "desc" },
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
-      }),
-    ]);
+    const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+    if (!vendor) return { error: "Dyeing / printing vendor not found." };
 
-    if (!party) return { error: "Party not found." };
-    if (!vendor) return { error: "Vendor not found." };
+    // Validate parties and balances
+    const partyIds = Array.from(new Set(itemsToDispatch.map((i) => i.partyId)));
+    const parties = await prisma.party.findMany({ where: { id: { in: partyIds } } });
+    if (parties.length !== partyIds.length) return { error: "One or more selected parties not found." };
 
-    const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
-    if (sentMeters > currentBalance) {
-      return {
-        error: `Cannot dispatch ${sentMeters.toFixed(2)}m. Party ${party.name} currently only has ${currentBalance.toFixed(2)}m in factory custody.`,
-      };
+    // Check custody balance per party
+    for (const pId of partyIds) {
+      const party = parties.find((p) => p.id === pId)!;
+      const totalSentForParty = itemsToDispatch
+        .filter((i) => i.partyId === pId)
+        .reduce((sum, i) => sum + i.sentMeters, 0);
+
+      const lastEntry = await prisma.fabricLedgerEntry.findFirst({
+        where: { partyId: pId },
+        orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      });
+      const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
+
+      if (totalSentForParty > currentBalance) {
+        return {
+          error: `Cannot dispatch ${totalSentForParty.toFixed(2)}m for ${party.name}. Current in-factory custody balance is ${currentBalance.toFixed(2)}m.`,
+        };
+      }
     }
 
     await prisma.$transaction(async (tx: any) => {
-      // 1. Create Outsource Batch
-      await tx.outsourceBatch.create({
-        data: {
-          ogpNumber,
-          partyId,
-          vendorId,
-          inwardId,
-          processType,
-          targetShade,
-          sentMeters,
-          sentDate: dateDispatch,
-          sentById: session.userId,
-          status: "WITH_VENDOR",
-        },
-      });
+      for (const item of itemsToDispatch) {
+        let inwardChallanNo: string | null = null;
+        if (item.inwardId) {
+          const inward = await tx.fabricInward.findUnique({
+            where: { id: item.inwardId },
+            select: { partyChallanNo: true },
+          });
+          if (inward) {
+            inwardChallanNo = inward.partyChallanNo;
+          }
+        }
 
-      // 2. Post Outward Dispatch Entry to Party Fabric Ledger
-      await tx.fabricLedgerEntry.create({
-        data: {
-          partyId,
-          movementType: "OUTWARD_TO_VENDOR",
-          referenceNumber: ogpNumber,
-          creditMeters: 0,
-          debitMeters: sentMeters,
-          shrinkageMeters: 0,
-          runningBalance: 0, // Computed by reconcilePartyLedger
-          timestamp: dateDispatch,
-          notes: `Dispatched to ${vendor.name} for ${processType} (Target: ${targetShade})`,
-        },
-      });
+        // 1. Create Outsource Batch item
+        await tx.outsourceBatch.create({
+          data: {
+            ogpNumber,
+            partyId: item.partyId,
+            vendorId,
+            inwardId: item.inwardId || null,
+            processType: item.processType,
+            targetShade: item.targetShade,
+            sentMeters: item.sentMeters,
+            sentDate: dateDispatch,
+            sentById: session.userId,
+            status: "WITH_VENDOR",
+            remarks,
+          },
+        });
 
-      // 3. Synchronize all running balances chronologically
-      await reconcilePartyLedger(tx, partyId);
+        // 2. Post Outward Dispatch Entry to Party Fabric Ledger tagged with Originating Inward Ref
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId: item.partyId,
+            partyChallanNo: inwardChallanNo,
+            inwardId: item.inwardId || null,
+            movementType: "OUTWARD_TO_VENDOR",
+            referenceNumber: ogpNumber,
+            creditMeters: 0,
+            debitMeters: item.sentMeters,
+            shrinkageMeters: 0,
+            runningBalance: 0, // Computed by reconcilePartyLedger
+            timestamp: dateDispatch,
+            notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade})${
+              inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
+            }`,
+          },
+        });
+      }
+
+      // Reconcile ledgers for all affected parties
+      for (const pId of partyIds) {
+        await reconcilePartyLedger(tx, pId);
+      }
     });
 
     revalidatePath("/dashboard");
     revalidatePath("/outsource");
     revalidatePath("/ledger");
+
+    const totalMeters = itemsToDispatch.reduce((sum, i) => sum + i.sentMeters, 0);
     return {
       success: true,
-      message: `Outward Gate Pass ${ogpNumber} issued for ${sentMeters}m to ${vendor.name}. Logged in party ledger.`,
+      message: `Outward Gate Pass ${ogpNumber} issued for ${totalMeters.toFixed(2)}m (${itemsToDispatch.length} lot${
+        itemsToDispatch.length > 1 ? "s" : ""
+      }) to ${vendor.name}.`,
     };
   } catch (err: any) {
     console.error("Outsource dispatch error:", err);
@@ -513,13 +585,14 @@ export async function createOutsourceDispatchAction(
 }
 
 // -----------------------------------------------------------------------------
-// 3. OUTSOURCE DYEING / PRINTING: RECEIVE RETURN WITH SHRINKAGE
+// 3. OUTSOURCE DYEING / PRINTING: RECEIVE RETURN (PARTIAL OR FULL WITH TECHNICAL SHRINKAGE)
 // -----------------------------------------------------------------------------
 const OutsourceReturnSchema = z.object({
   batchId: z.string().min(1, "Batch ID is required"),
   receivedDate: z.string().optional(),
-  vendorChallanNo: z.string().trim().min(1, "Vendor Return Challan # is required"),
-  receivedMeters: z.coerce.number().positive("Received meters must be positive"),
+  vendorChallanNo: z.string().trim().min(1, "Dyer delivery slip # is required"),
+  accountedMeters: z.coerce.number().positive("Accounted dispatched meterage must be positive").optional(),
+  receivedMeters: z.coerce.number().positive("Physical received meters must be positive"),
   remarks: z.string().optional(),
 });
 
@@ -533,6 +606,7 @@ export async function returnOutsourceBatchAction(
     batchId: formData.get("batchId"),
     receivedDate: formData.get("receivedDate") || undefined,
     vendorChallanNo: formData.get("vendorChallanNo"),
+    accountedMeters: formData.get("accountedMeters") ? formData.get("accountedMeters") : undefined,
     receivedMeters: formData.get("receivedMeters"),
     remarks: formData.get("remarks") || undefined,
   };
@@ -548,61 +622,109 @@ export async function returnOutsourceBatchAction(
   try {
     const batch = await prisma.outsourceBatch.findUnique({
       where: { id: batchId },
-      include: { vendor: true },
+      include: { vendor: true, inward: true },
     });
 
     if (!batch) {
       return { error: "Outsource batch record not found." };
     }
 
-    const sentMeters = Number(batch.sentMeters);
-    const shrinkageMeters = Number((sentMeters - receivedMeters).toFixed(2));
-    const shrinkagePercent = Number(((shrinkageMeters / sentMeters) * 100).toFixed(2));
+    const totalSent = Number(batch.sentMeters);
+    const prevAccounted = Number(batch.accountedMeters || 0);
+    const pendingWithVendor = Number((totalSent - prevAccounted).toFixed(2));
+
+    const accountedMeters = parsed.data.accountedMeters ?? pendingWithVendor;
+
+    if (accountedMeters > pendingWithVendor + 0.05) {
+      return {
+        error: `Cannot account for ${accountedMeters.toFixed(2)}m. Only ${pendingWithVendor.toFixed(2)}m is currently pending with vendor.`,
+      };
+    }
+
+    const shrinkageMeters = Number((accountedMeters - receivedMeters).toFixed(2));
+    const shrinkagePercent =
+      accountedMeters > 0 ? Number(((shrinkageMeters / accountedMeters) * 100).toFixed(2)) : 0;
 
     await prisma.$transaction(async (tx: any) => {
-      // 1. Update Batch status
-      await tx.outsourceBatch.update({
-        where: { id: batchId },
+      // 1. Log this specific partial / full return record
+      await tx.outsourceBatchReturn.create({
         data: {
-          status: "RECEIVED_COMPLETE",
+          batchId,
           vendorChallanNo,
+          accountedMeters,
           receivedMeters,
           shrinkageMeters,
           shrinkagePercent,
-          receivedDate: dateReturn,
+          returnDate: dateReturn,
           receivedById: session.userId,
           remarks,
         },
       });
 
-      // 2. Option A Ledger Entry:
-      // Inward (+) receives gross sentMeters (+5,000m)
-      // Shrinkage (-) deducts process loss (-300m)
-      // Net custody balance increases by +receivedMeters!
+      // 2. Update Batch totals and status
+      const newAccounted = Number((prevAccounted + accountedMeters).toFixed(2));
+      const newReceived = Number(((Number(batch.receivedMeters) || 0) + receivedMeters).toFixed(2));
+      const newShrinkage = Number(((Number(batch.shrinkageMeters) || 0) + shrinkageMeters).toFixed(2));
+      const isComplete = newAccounted >= totalSent - 0.05;
+      const newStatus = isComplete ? "RECEIVED_COMPLETE" : "RECEIVED_PARTIAL";
+
+      const existingSlip = batch.vendorChallanNo;
+      const combinedSlips = existingSlip
+        ? existingSlip.includes(vendorChallanNo)
+          ? existingSlip
+          : `${existingSlip}, ${vendorChallanNo}`
+        : vendorChallanNo;
+
+      await tx.outsourceBatch.update({
+        where: { id: batchId },
+        data: {
+          status: newStatus,
+          accountedMeters: newAccounted,
+          receivedMeters: newReceived,
+          shrinkageMeters: newShrinkage,
+          shrinkagePercent:
+            newAccounted > 0 ? Number(((newShrinkage / newAccounted) * 100).toFixed(2)) : 0,
+          vendorChallanNo: combinedSlips,
+          receivedDate: dateReturn,
+          receivedById: session.userId,
+          remarks: remarks || batch.remarks,
+        },
+      });
+
+      // 3. Post Ledger Entry tagged with Originating Inward Reference
+      const inwardRef = batch.inward?.partyChallanNo;
       await tx.fabricLedgerEntry.create({
         data: {
           partyId: batch.partyId,
+          partyChallanNo: inwardRef || null,
+          inwardId: batch.inwardId || null,
           movementType: "INWARD_FROM_VENDOR",
           referenceNumber: batch.ogpNumber,
-          creditMeters: sentMeters,
+          creditMeters: accountedMeters,
           debitMeters: 0,
           shrinkageMeters: shrinkageMeters > 0 ? shrinkageMeters : 0,
           runningBalance: 0, // Computed by reconcilePartyLedger
           timestamp: dateReturn,
-          notes: `Received from ${batch.vendor.name} Challan #${vendorChallanNo} (${batch.processType}, ${batch.targetShade}). Received: ${receivedMeters.toFixed(2)}m | Technical Shrinkage: ${shrinkageMeters.toFixed(2)}m (${shrinkagePercent.toFixed(2)}%)`,
+          notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
+            inwardRef ? ` [Ref: #${inwardRef}]` : ""
+          } (${batch.processType}, ${batch.targetShade}). Received: ${receivedMeters.toFixed(2)}m | Technical Shrinkage: ${shrinkageMeters.toFixed(2)}m (${shrinkagePercent.toFixed(2)}%) [Accounted: ${accountedMeters.toFixed(2)}m]`,
         },
       });
 
-      // 3. Synchronize all running balances chronologically
+      // 4. Synchronize running balances
       await reconcilePartyLedger(tx, batch.partyId);
     });
 
     revalidatePath("/dashboard");
     revalidatePath("/outsource");
     revalidatePath("/ledger");
+
+    const remaining = Number((totalSent - (prevAccounted + accountedMeters)).toFixed(2));
+    const remainingText = remaining > 0 ? ` (Remaining with vendor: ${remaining.toFixed(2)}m)` : " (Batch completed)";
+
     return {
       success: true,
-      message: `Return accepted: ${receivedMeters}m received. Shrinkage logged: ${shrinkageMeters}m (${shrinkagePercent}%).`,
+      message: `Return recorded on Dyer Slip #${vendorChallanNo}: +${receivedMeters.toFixed(2)}m received, -${shrinkageMeters.toFixed(2)}m shrinkage${remainingText}.`,
     };
   } catch (err: any) {
     console.error("Outsource return error:", err);
@@ -615,6 +737,7 @@ export async function returnOutsourceBatchAction(
 // -----------------------------------------------------------------------------
 const DeliverySchema = z.object({
   partyId: z.string().min(1, "Party selection is required"),
+  inwardId: z.string().optional(),
   fabricType: z.string().trim().min(1, "Fabric specification is required"),
   colorShade: z.string().trim().min(1, "Color / Shade is required"),
   totalRolls: z.coerce.number().int().positive("Roll count must be at least 1"),
@@ -631,6 +754,7 @@ export async function createDeliveryChallanAction(
 
   const rawData = {
     partyId: formData.get("partyId"),
+    inwardId: formData.get("inwardId") || undefined,
     fabricType: formData.get("fabricType"),
     colorShade: formData.get("colorShade"),
     totalRolls: formData.get("totalRolls"),
@@ -644,13 +768,22 @@ export async function createDeliveryChallanAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { partyId, fabricType, colorShade, totalRolls, totalMeters, vehicleDriver, remarks } =
+  const { partyId, inwardId, fabricType, colorShade, totalRolls, totalMeters, vehicleDriver, remarks } =
     parsed.data;
 
   const dateDelivery = parseLedgerDate(undefined, 4);
   const challanNumber = generateCode("DC");
 
   try {
+    let inwardChallanNo: string | null = null;
+    if (inwardId) {
+      const inward = await prisma.fabricInward.findUnique({
+        where: { id: inwardId },
+        select: { partyChallanNo: true },
+      });
+      if (inward) inwardChallanNo = inward.partyChallanNo;
+    }
+
     await prisma.$transaction(async (tx: any) => {
       // 1. Create Delivery Challan
       const challan = await tx.deliveryChallan.create({
@@ -664,6 +797,7 @@ export async function createDeliveryChallanAction(
           dispatchedById: session.userId,
           items: {
             create: {
+              inwardId: inwardId || null,
               fabricType,
               colorShade,
               metersDelivered: totalMeters,
@@ -673,10 +807,12 @@ export async function createDeliveryChallanAction(
         },
       });
 
-      // 2. Post Debit to Party Fabric Ledger
+      // 2. Post Debit to Party Fabric Ledger tagged with Originating Inward Ref
       await tx.fabricLedgerEntry.create({
         data: {
           partyId,
+          partyChallanNo: inwardChallanNo,
+          inwardId: inwardId || null,
           movementType: "DELIVERY_TO_PARTY",
           referenceNumber: challanNumber,
           creditMeters: 0,
@@ -684,7 +820,9 @@ export async function createDeliveryChallanAction(
           shrinkageMeters: 0,
           runningBalance: 0, // Computed by reconcilePartyLedger
           timestamp: dateDelivery,
-          notes: `Dispatched on Delivery Challan #${challanNumber} (${totalRolls} rolls of ${colorShade} ${fabricType})`,
+          notes: `Dispatched on Delivery Challan #${challanNumber}${
+            inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
+          } (${totalRolls} rolls of ${colorShade} ${fabricType})`,
         },
       });
 
@@ -699,7 +837,7 @@ export async function createDeliveryChallanAction(
     revalidatePath("/ledger");
     return {
       success: true,
-      message: `Delivery Challan ${challanNumber} generated for ${totalMeters}m. Party balance updated.`,
+      message: `Delivery Challan ${challanNumber} generated for ${totalMeters.toFixed(2)}m. Party balance updated.`,
     };
   } catch (err: any) {
     console.error("Delivery error:", err);

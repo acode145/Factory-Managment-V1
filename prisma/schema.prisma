@@ -20,6 +20,7 @@ model User {
   dispatchesCreated DeliveryChallan[] @relation("UserDispatches")
   outsourceSent     OutsourceBatch[] @relation("SentByUser")
   outsourceReceived OutsourceBatch[] @relation("ReceivedByUser")
+  outsourceReturns  OutsourceBatchReturn[] @relation("ReturnReceivedByUser")
 }
 
 model Party {
@@ -78,11 +79,12 @@ model FabricInward {
 
   outsourceBatches OutsourceBatch[]
   deliveries       DeliveryChallanItem[]
+  ledgerEntries    FabricLedgerEntry[]
 }
 
 model OutsourceBatch {
   id               String            @id @default(uuid())
-  ogpNumber        String            @unique // OGP-2026-XXXX
+  ogpNumber        String            // OGP-2026-XXXX (Can be shared across multiple items in same dispatch)
   partyId          String
   party            Party             @relation(fields: [partyId], references: [id])
   vendorId         String
@@ -97,6 +99,7 @@ model OutsourceBatch {
   sentBy           User              @relation("SentByUser", fields: [sentById], references: [id])
 
   status           String            @default("WITH_VENDOR") // WITH_VENDOR, RECEIVED_COMPLETE, RECEIVED_PARTIAL
+  accountedMeters  Decimal           @default(0) @db.Decimal(10, 2) // Sum of sentMeters cleared by returns
   vendorChallanNo  String?
   receivedMeters   Decimal?          @db.Decimal(10, 2)
   shrinkageMeters  Decimal?          @db.Decimal(10, 2)
@@ -108,6 +111,26 @@ model OutsourceBatch {
   editHistory      Json?             @default("[]")
   createdAt        DateTime          @default(now())
   updatedAt        DateTime?         @updatedAt
+
+  returns          OutsourceBatchReturn[]
+
+  @@index([ogpNumber])
+}
+
+model OutsourceBatchReturn {
+  id               String            @id @default(uuid())
+  batchId          String
+  batch            OutsourceBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  vendorChallanNo  String
+  accountedMeters  Decimal           @db.Decimal(10, 2) // Portion of sent meters cleared
+  receivedMeters   Decimal           @db.Decimal(10, 2) // Physical meters received
+  shrinkageMeters  Decimal           @db.Decimal(10, 2)
+  shrinkagePercent Decimal           @db.Decimal(5, 2)
+  returnDate       DateTime          @default(now())
+  receivedById     String
+  receivedBy       User              @relation("ReturnReceivedByUser", fields: [receivedById], references: [id])
+  remarks          String?
+  createdAt        DateTime          @default(now())
 }
 
 model DeliveryChallan {
@@ -145,6 +168,9 @@ model FabricLedgerEntry {
   id               String            @id @default(uuid())
   partyId          String
   party            Party             @relation(fields: [partyId], references: [id])
+  partyChallanNo   String?           // Originating Party Inward Challan / Bilty # (e.g. CH-0002)
+  inwardId         String?
+  inward           FabricInward?     @relation(fields: [inwardId], references: [id])
   movementType     String            // PARTY_INWARD, OUTWARD_TO_VENDOR, INWARD_FROM_VENDOR, DELIVERY_TO_PARTY, ADJUSTMENT
   referenceNumber  String            // IGP, OGP, or DC number
   creditMeters     Decimal           @default(0) @db.Decimal(10, 2)
@@ -154,4 +180,7 @@ model FabricLedgerEntry {
   timestamp        DateTime          @default(now())
   notes            String?
   createdAt        DateTime          @default(now())
+
+  @@index([partyId])
+  @@index([partyChallanNo])
 }

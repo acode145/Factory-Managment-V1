@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { createDeliveryChallanAction, FabricActionState } from "@/actions/fabric";
+import { metersToYards } from "@/lib/units";
 import { Truck, CheckCircle2, AlertTriangle, ArrowUpRight } from "lucide-react";
 
 interface PartyBalanceOption {
@@ -11,19 +12,56 @@ interface PartyBalanceOption {
   balance: number;
 }
 
-export default function DeliveryChallanForm({ parties }: { parties: PartyBalanceOption[] }) {
+interface InwardOption {
+  id: string;
+  igpNumber: string;
+  partyId: string;
+  partyChallanNo: string;
+  fabricType: string;
+  colorShade: string;
+  measuredMeters: number;
+  availableMeters: number;
+  party?: { name: string; code: string };
+}
+
+export default function DeliveryChallanForm({
+  parties,
+  inwards = [],
+}: {
+  parties: PartyBalanceOption[];
+  inwards?: InwardOption[];
+}) {
   const [state, formAction, isPending] = useActionState<FabricActionState, FormData>(
     createDeliveryChallanAction,
     {}
   );
 
   const [selectedPartyId, setSelectedPartyId] = useState("");
+  const [selectedInwardId, setSelectedInwardId] = useState("");
   const [deliveryMeters, setDeliveryMeters] = useState("");
+  const [fabricType, setFabricType] = useState("");
+  const [colorShade, setColorShade] = useState("");
 
   const currentParty = parties.find((p) => p.id === selectedPartyId);
-  const maxAvailable = currentParty?.balance || 0;
+  const partyInwards = inwards.filter((i) => i.partyId === selectedPartyId);
+  const currentInward = inwards.find((i) => i.id === selectedInwardId);
+
+  const maxAvailable = currentInward
+    ? currentInward.availableMeters
+    : currentParty?.balance || 0;
   const numMeters = parseFloat(deliveryMeters) || 0;
   const isOverBalance = numMeters > maxAvailable && maxAvailable > 0;
+
+  const handleInwardChange = (inwardId: string) => {
+    setSelectedInwardId(inwardId);
+    if (inwardId) {
+      const inward = inwards.find((i) => i.id === inwardId);
+      if (inward) {
+        if (!fabricType) setFabricType(inward.fabricType);
+        if (!colorShade) setColorShade(inward.colorShade);
+      }
+    }
+  };
 
   return (
     <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs">
@@ -52,45 +90,78 @@ export default function DeliveryChallanForm({ parties }: { parties: PartyBalance
       )}
 
       <form action={formAction} className="space-y-4">
-        {/* Party Selector */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-              Client Party
-            </label>
-            {currentParty && (
-              <span className="text-xs font-mono font-medium text-zinc-600">
-                In Factory Custody:{" "}
-                <strong className="text-zinc-950 font-bold">{currentParty.balance.toFixed(2)}m</strong>
-              </span>
-            )}
+        {/* Row: Party & Inward Lot Reference */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                Client Party *
+              </label>
+              {currentParty && (
+                <span className="text-xs font-mono font-medium text-zinc-600">
+                  Custody:{" "}
+                  <strong className="text-zinc-950 font-bold">{currentParty.balance.toFixed(2)}m</strong>
+                </span>
+              )}
+            </div>
+            <select
+              name="partyId"
+              required
+              value={selectedPartyId}
+              onChange={(e) => {
+                setSelectedPartyId(e.target.value);
+                setSelectedInwardId("");
+              }}
+              className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+            >
+              <option value="">-- Select Party to Dispatch --</option>
+              {parties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.code}) — Balance: {p.balance.toFixed(2)}m
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            name="partyId"
-            required
-            value={selectedPartyId}
-            onChange={(e) => setSelectedPartyId(e.target.value)}
-            className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-          >
-            <option value="">-- Select Party to Dispatch --</option>
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.code}) — Balance: {p.balance.toFixed(2)}m
-              </option>
-            ))}
-          </select>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                Originating Inward Lot Ref # (Optional)
+              </label>
+              {currentInward && (
+                <span className="text-xs font-mono font-medium text-emerald-700">
+                  Lot Avail: <strong>{currentInward.availableMeters.toFixed(2)}m</strong>
+                </span>
+              )}
+            </div>
+            <select
+              name="inwardId"
+              value={selectedInwardId}
+              onChange={(e) => handleInwardChange(e.target.value)}
+              className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+            >
+              <option value="">-- General Factory Stock / Tag Specific Lot --</option>
+              {partyInwards.map((i) => (
+                <option key={i.id} value={i.id}>
+                  #{i.partyChallanNo} ({i.fabricType}, {i.colorShade}) — Avail: {i.availableMeters.toFixed(2)}m
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Row: Fabric Type & Color */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           <div>
             <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-              Fabric Item / Specification
+              Fabric Item / Specification *
             </label>
             <input
               type="text"
               name="fabricType"
               required
+              value={fabricType}
+              onChange={(e) => setFabricType(e.target.value)}
               placeholder="e.g. Embroidered Lawn Shirt Pieces"
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             />
@@ -98,12 +169,14 @@ export default function DeliveryChallanForm({ parties }: { parties: PartyBalance
 
           <div>
             <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-              Color / Shade State
+              Color / Shade State *
             </label>
             <input
               type="text"
               name="colorShade"
               required
+              value={colorShade}
+              onChange={(e) => setColorShade(e.target.value)}
               placeholder="e.g. Dyed Jet Black (Batch #4)"
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             />
@@ -115,11 +188,18 @@ export default function DeliveryChallanForm({ parties }: { parties: PartyBalance
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-                Delivered Meters
+                Delivered Meters *
               </label>
-              {isOverBalance && (
-                <span className="text-[11px] text-rose-600 font-medium">Exceeds party stock!</span>
-              )}
+              <div className="flex items-center gap-2">
+                {numMeters > 0 && (
+                  <span className="text-[11px] font-mono text-zinc-500">
+                    ≈ {metersToYards(numMeters).toFixed(1)} yds
+                  </span>
+                )}
+                {isOverBalance && (
+                  <span className="text-[11px] text-rose-600 font-medium">Exceeds available balance!</span>
+                )}
+              </div>
             </div>
             <input
               type="number"
@@ -131,14 +211,14 @@ export default function DeliveryChallanForm({ parties }: { parties: PartyBalance
               onChange={(e) => setDeliveryMeters(e.target.value)}
               placeholder="e.g. 9600.00"
               className={`w-full h-12 px-3.5 bg-white border rounded-lg text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
-                isOverBalance ? "border-rose-300 focus:ring-rose-600" : "border-zinc-300 focus:ring-zinc-900"
+                isOverBalance ? "border-rose-300 focus:ring-rose-600 bg-rose-50/20" : "border-zinc-300 focus:ring-zinc-900"
               }`}
             />
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-              Roll / Than / Carton Count
+              Roll / Than / Carton Count *
             </label>
             <input
               type="number"
@@ -182,7 +262,7 @@ export default function DeliveryChallanForm({ parties }: { parties: PartyBalance
         {/* Submit Action */}
         <button
           type="submit"
-          disabled={isPending}
+          disabled={isPending || isOverBalance || !selectedPartyId || numMeters <= 0}
           className="w-full h-12 mt-2 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-medium rounded-lg text-sm flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 transition-colors"
         >
           {isPending ? (

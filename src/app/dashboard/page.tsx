@@ -57,6 +57,11 @@ export default async function DashboardPage({
         party: { select: { name: true, code: true } },
         vendor: { select: { name: true, code: true } },
         sentBy: { select: { fullName: true } },
+        inward: { select: { partyChallanNo: true, igpNumber: true, fabricType: true, colorShade: true } },
+        returns: {
+          orderBy: { returnDate: "desc" },
+          include: { receivedBy: { select: { fullName: true } } },
+        },
       },
     }),
     prisma.fabricLedgerEntry.findMany({
@@ -72,9 +77,13 @@ export default async function DashboardPage({
   const batches = rawBatches.map((b: any) => ({
     id: b.id,
     ogpNumber: b.ogpNumber,
+    partyId: b.partyId,
+    vendorId: b.vendorId,
+    inwardId: b.inwardId,
     processType: b.processType,
     targetShade: b.targetShade,
     sentMeters: Number(b.sentMeters),
+    accountedMeters: Number(b.accountedMeters || 0),
     sentDate: b.sentDate,
     status: b.status,
     vendorChallanNo: b.vendorChallanNo,
@@ -82,14 +91,29 @@ export default async function DashboardPage({
     shrinkageMeters: b.shrinkageMeters !== null && b.shrinkageMeters !== undefined ? Number(b.shrinkageMeters) : null,
     shrinkagePercent: b.shrinkagePercent !== null && b.shrinkagePercent !== undefined ? Number(b.shrinkagePercent) : null,
     receivedDate: b.receivedDate,
+    remarks: b.remarks,
     party: b.party,
     vendor: b.vendor,
     sentBy: b.sentBy,
+    inward: b.inward,
+    returns: (b.returns || []).map((r: any) => ({
+      id: r.id,
+      vendorChallanNo: r.vendorChallanNo,
+      accountedMeters: Number(r.accountedMeters),
+      receivedMeters: Number(r.receivedMeters),
+      shrinkageMeters: Number(r.shrinkageMeters),
+      shrinkagePercent: Number(r.shrinkagePercent),
+      returnDate: r.returnDate,
+      receivedBy: r.receivedBy,
+      remarks: r.remarks,
+    })),
   }));
 
   const ledgerEntries = rawLedgerEntries.map((e: any) => ({
     id: e.id,
     partyId: e.partyId,
+    partyChallanNo: e.partyChallanNo,
+    inwardId: e.inwardId,
     movementType: e.movementType,
     referenceNumber: e.referenceNumber,
     creditMeters: Number(e.creditMeters || 0),
@@ -100,26 +124,41 @@ export default async function DashboardPage({
     notes: e.notes,
   }));
 
-  const inwardList = rawInwardList.map((i: any) => ({
-    id: i.id,
-    igpNumber: i.igpNumber,
-    partyId: i.partyId,
-    partyChallanNo: i.partyChallanNo,
-    fabricType: i.fabricType,
-    colorShade: i.colorShade,
-    rollCount: i.rollCount,
-    challanMeters: Number(i.challanMeters),
-    measuredMeters: Number(i.measuredMeters),
-    shortageMeters: Number(i.shortageMeters),
-    driverDetails: i.driverDetails,
-    remarks: i.remarks,
-    editHistory: i.editHistory,
-    challanDate: i.challanDate,
-    createdAt: i.createdAt,
-    updatedAt: i.updatedAt,
-    party: i.party,
-    receivedBy: i.receivedBy,
-  }));
+  const inwardList = rawInwardList.map((i: any) => {
+    const lotEntries = ledgerEntries.filter(
+      (e: any) =>
+        e.inwardId === i.id ||
+        (e.partyChallanNo && e.partyChallanNo === i.partyChallanNo && e.partyId === i.partyId)
+    );
+    let availableMeters = Number(i.measuredMeters);
+    if (lotEntries.length > 0) {
+      const c = lotEntries.reduce((s: number, e: any) => s + Number(e.creditMeters || 0), 0);
+      const d = lotEntries.reduce((s: number, e: any) => s + Number(e.debitMeters || 0), 0);
+      const sh = lotEntries.reduce((s: number, e: any) => s + Number(e.shrinkageMeters || 0), 0);
+      availableMeters = Math.max(0, Number((c - d - sh).toFixed(2)));
+    }
+    return {
+      id: i.id,
+      igpNumber: i.igpNumber,
+      partyId: i.partyId,
+      partyChallanNo: i.partyChallanNo,
+      fabricType: i.fabricType,
+      colorShade: i.colorShade,
+      rollCount: i.rollCount,
+      challanMeters: Number(i.challanMeters),
+      measuredMeters: Number(i.measuredMeters),
+      shortageMeters: Number(i.shortageMeters),
+      availableMeters,
+      driverDetails: i.driverDetails,
+      remarks: i.remarks,
+      editHistory: i.editHistory,
+      challanDate: i.challanDate,
+      createdAt: i.createdAt,
+      updatedAt: i.updatedAt,
+      party: i.party,
+      receivedBy: i.receivedBy,
+    };
+  });
 
   // Compute live KPI metrics
   const partyBalances = parties.map((p: any) => {
@@ -137,8 +176,8 @@ export default async function DashboardPage({
   const totalFabricInCustody = partyBalances.reduce((acc: number, curr: any) => acc + curr.balance, 0);
 
   const totalAtDyers = batches
-    .filter((b: any) => b.status === "WITH_VENDOR")
-    .reduce((acc: number, curr: any) => acc + Number(curr.sentMeters), 0);
+    .filter((b: any) => b.status === "WITH_VENDOR" || b.status === "RECEIVED_PARTIAL")
+    .reduce((acc: number, curr: any) => acc + (Number(curr.sentMeters) - Number(curr.accountedMeters || 0)), 0);
 
   const totalShortagesFlagged = inwardList.reduce(
     (acc: number, curr: any) => acc + (curr.shortageMeters > 0 ? curr.shortageMeters : 0),
@@ -272,13 +311,24 @@ export default async function DashboardPage({
         )}
 
         {tab === "outsource" && (
-          <OutsourceBatchManager parties={partyBalances} vendors={vendors} batches={batches} />
+          <OutsourceBatchManager
+            parties={partyBalances}
+            vendors={vendors}
+            batches={batches}
+            inwards={inwardList}
+          />
         )}
 
-        {tab === "delivery" && <DeliveryChallanForm parties={partyBalances} />}
+        {tab === "delivery" && (
+          <DeliveryChallanForm parties={partyBalances} inwards={inwardList} />
+        )}
 
         {tab === "ledger" && (
-          <PartyRunningLedger parties={partyBalances} entries={ledgerEntries} />
+          <PartyRunningLedger
+            parties={partyBalances}
+            entries={ledgerEntries}
+            inwards={inwardList}
+          />
         )}
       </main>
     </div>
