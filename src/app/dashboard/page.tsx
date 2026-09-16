@@ -14,7 +14,6 @@ import {
   Truck,
   BookOpen,
   Building2,
-  Clock,
   AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
@@ -49,6 +48,9 @@ export default async function DashboardPage({
       include: {
         party: { select: { name: true, code: true } },
         receivedBy: { select: { fullName: true } },
+        items: {
+          orderBy: { itemIndex: "asc" },
+        },
       },
     }),
     prisma.outsourceBatch.findMany({
@@ -114,12 +116,20 @@ export default async function DashboardPage({
     partyId: e.partyId,
     partyChallanNo: e.partyChallanNo,
     inwardId: e.inwardId,
+    inwardItemId: e.inwardItemId,
+    itemCategory: e.itemCategory || "CONTINUOUS",
+    fabricDescription: e.fabricDescription,
+    unit: e.unit || "METERS",
     movementType: e.movementType,
     referenceNumber: e.referenceNumber,
     creditMeters: Number(e.creditMeters || 0),
     debitMeters: Number(e.debitMeters || 0),
     shrinkageMeters: Number(e.shrinkageMeters || 0),
     runningBalance: Number(e.runningBalance || 0),
+    creditPieces: Number(e.creditPieces || 0),
+    debitPieces: Number(e.debitPieces || 0),
+    shortagePieces: Number(e.shortagePieces || 0),
+    runningPieces: Number(e.runningPieces || 0),
     timestamp: e.timestamp,
     notes: e.notes,
   }));
@@ -157,33 +167,51 @@ export default async function DashboardPage({
       updatedAt: i.updatedAt,
       party: i.party,
       receivedBy: i.receivedBy,
+      items: (i.items || []).map((it: any) => ({
+        id: it.id,
+        itemIndex: it.itemIndex,
+        fabricType: it.fabricType,
+        colorShade: it.colorShade,
+        unit: it.unit,
+        rollCount: it.rollCount,
+        challanQty: Number(it.challanQty),
+        measuredQty: Number(it.measuredQty),
+        shortageQty: Number(it.shortageQty),
+        standardMeters: it.standardMeters !== null ? Number(it.standardMeters) : null,
+      })),
     };
   });
 
-  // Compute live KPI metrics
+  // Compute live multi-metric KPI aggregates
   const partyBalances = parties.map((p: any) => {
-    const partyEntries = ledgerEntries.filter((e: any) => e.partyId === p.id);
-    const balance = partyEntries.length > 0 ? Number(partyEntries[0].runningBalance) : 0;
+    const contEntries = ledgerEntries.filter((e: any) => e.partyId === p.id && e.itemCategory !== "PIECES");
+    const pieceEntries = ledgerEntries.filter((e: any) => e.partyId === p.id && e.itemCategory === "PIECES");
+    const balance = contEntries.length > 0 ? Number(contEntries[0].runningBalance || 0) : 0;
+    const piecesBalance = pieceEntries.length > 0 ? Number(pieceEntries[0].runningPieces || 0) : 0;
     return {
       id: p.id,
       name: p.name,
       code: p.code,
       partyType: p.partyType,
       balance,
+      piecesBalance,
     };
   });
 
   const totalFabricInCustody = partyBalances.reduce((acc: number, curr: any) => acc + curr.balance, 0);
+  const totalPiecesInCustody = partyBalances.reduce((acc: number, curr: any) => acc + curr.piecesBalance, 0);
 
   const totalAtDyers = batches
     .filter((b: any) => b.status === "WITH_VENDOR" || b.status === "RECEIVED_PARTIAL")
     .reduce((acc: number, curr: any) => acc + (Number(curr.sentMeters) - Number(curr.accountedMeters || 0)), 0);
 
-  const totalShortagesFlagged = inwardList.reduce(
-    (acc: number, curr: any) => acc + (curr.shortageMeters > 0 ? curr.shortageMeters : 0),
-    0
-  );
+  const totalShortagesFlagged = ledgerEntries
+    .filter((e: any) => e.movementType === "INWARD_SHORTAGE" && e.itemCategory !== "PIECES")
+    .reduce((acc: number, curr: any) => acc + Number(curr.shrinkageMeters || 0), 0);
 
+  const totalPieceShortages = ledgerEntries
+    .filter((e: any) => e.movementType === "INWARD_SHORTAGE" && e.itemCategory === "PIECES")
+    .reduce((acc: number, curr: any) => acc + (curr.shortagePieces || 0), 0);
   return (
     <div className="min-h-screen flex flex-col bg-zinc-100">
       <Header session={session} />
@@ -197,64 +225,77 @@ export default async function DashboardPage({
                 Fabric Operations & Custody Desk
               </h1>
               <p className="text-xs sm:text-sm text-zinc-500">
-                Inward gate verification, outsource dyeing tracking, and party running statements.
+                Inward gate verification, outsource dyeing tracking, and dual-table running statements.
               </p>
             </div>
           </div>
 
           {/* Quick Metrics Cards (Stacked on Mobile, 4-col on Desktop) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            {/* Card 1: In Factory Custody */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs space-y-1">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>In Factory Custody</span>
                 <Layers className="w-4 h-4 text-emerald-600" />
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-zinc-950">
+              <div className="text-xl font-bold font-mono text-zinc-950">
                 {totalFabricInCustody.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">
-                ≈ {metersToYards(totalFabricInCustody).toFixed(1)} yds • Across {parties.length} parties
-              </span>
+              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                <span>≈ {metersToYards(totalFabricInCustody).toFixed(1)} yd</span>
+                <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  {totalPiecesInCustody.toLocaleString()} pcs
+                </span>
+              </div>
             </div>
 
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            {/* Card 2: Active at Dyers */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs space-y-1">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>Active at Dyers</span>
                 <Truck className="w-4 h-4 text-amber-600" />
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-zinc-950">
+              <div className="text-xl font-bold font-mono text-zinc-950">
                 {totalAtDyers.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">
-                ≈ {metersToYards(totalAtDyers).toFixed(1)} yds • In vendor processing
-              </span>
+              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                <span>≈ {metersToYards(totalAtDyers).toFixed(1)} yd</span>
+                <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                  0 pcs
+                </span>
+              </div>
             </div>
 
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            {/* Card 3: Inward Shortages */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs space-y-1">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>Inward Shortages</span>
                 <AlertTriangle className="w-4 h-4 text-rose-600" />
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-rose-800">
+              <div className="text-xl font-bold font-mono text-rose-800">
                 {totalShortagesFlagged.toFixed(2)}m
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">
-                ≈ {metersToYards(totalShortagesFlagged).toFixed(1)} yds • Claimed vs measured gap
-              </span>
+              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                <span>≈ {metersToYards(totalShortagesFlagged).toFixed(1)} yd</span>
+                <span className="font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                  {totalPieceShortages.toLocaleString()} pcs
+                </span>
+              </div>
             </div>
 
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            {/* Card 4: Registered Parties */}
+            <div className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs space-y-1">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>Registered Parties</span>
                 <Building2 className="w-4 h-4 text-zinc-400" />
               </div>
-              <div className="mt-1 text-xl font-bold font-mono text-zinc-950">{parties.length}</div>
-              <span className="text-[10px] text-zinc-400 font-mono">Active accounts</span>
+              <div className="text-xl font-bold font-mono text-zinc-950">{parties.length}</div>
+              <span className="text-[10px] text-zinc-400 font-mono block">Active client accounts</span>
             </div>
           </div>
         </div>
 
-        {/* Tab Navigation (Horizontal Scrollable on Mobile) */}
+        {/* Tab Navigation */}
         <div className="flex items-center space-x-2 border-b border-zinc-200 pb-2 mb-6 overflow-x-auto">
           <Link
             href="/dashboard?tab=inward"

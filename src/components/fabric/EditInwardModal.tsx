@@ -30,6 +30,7 @@ export interface InwardReceiptItem {
     updatedAt: string;
     changes: string;
   }> | null;
+  items?: Array<{ id: string; itemIndex: number; fabricType: string; colorShade: string; unit: string; rollCount: number; challanQty: number; measuredQty: number; shortageQty: number; standardMeters?: number | null; }>;
 }
 
 interface EditInwardModalProps {
