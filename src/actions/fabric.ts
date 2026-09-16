@@ -249,17 +249,10 @@ export async function createPartyInwardAction(
         const shortageQty = Number((item.challanQty - item.measuredQty).toFixed(2));
 
         let stdMeters: number | null = null;
-        let stdShortage: number = 0;
-        let stdSurplus: number = 0;
-
         if (item.unit === "YARDS") {
           stdMeters = yardsToMeters(item.measuredQty);
-          stdShortage = shortageQty > 0 ? yardsToMeters(shortageQty) : 0;
-          stdSurplus = shortageQty < 0 ? yardsToMeters(Math.abs(shortageQty)) : 0;
         } else if (item.unit === "METERS") {
           stdMeters = item.measuredQty;
-          stdShortage = shortageQty > 0 ? shortageQty : 0;
-          stdSurplus = shortageQty < 0 ? Math.abs(shortageQty) : 0;
         }
 
         const inwardItem = await tx.fabricInwardItem.create({
@@ -278,7 +271,15 @@ export async function createPartyInwardAction(
         });
 
         if (item.unit === "PIECES") {
-          currentRunningPieces += Math.round(item.challanQty);
+          const shortagePieces = Math.round(shortageQty); // positive = shortage, negative = surplus
+          const diffText =
+            shortagePieces > 0
+              ? ` (-${shortagePieces} pcs)`
+              : shortagePieces < 0
+              ? ` (+${Math.abs(shortagePieces)} pcs)`
+              : "";
+          const notes = `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs] vs [Measured: ${Math.round(item.measuredQty)} pcs]${diffText}`;
+
           await tx.fabricLedgerEntry.create({
             data: {
               partyId,
@@ -295,68 +296,26 @@ export async function createPartyInwardAction(
               shrinkageMeters: 0,
               creditPieces: Math.round(item.challanQty),
               debitPieces: 0,
-              shortagePieces: 0,
-              runningPieces: currentRunningPieces,
+              shortagePieces: shortagePieces,
+              runningPieces: 0,
               timestamp: dateClaimed,
-              notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs]`,
+              notes,
             },
           });
-
-          if (shortageQty > 0) {
-            currentRunningPieces -= Math.round(shortageQty);
-            await tx.fabricLedgerEntry.create({
-              data: {
-                partyId,
-                partyChallanNo,
-                inwardId: inward.id,
-                inwardItemId: inwardItem.id,
-                itemCategory: "PIECES",
-                fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                unit: "PIECES",
-                movementType: "INWARD_SHORTAGE",
-                referenceNumber: igpNumber,
-                creditMeters: 0,
-                debitMeters: 0,
-                shrinkageMeters: 0,
-                creditPieces: 0,
-                debitPieces: 0,
-                shortagePieces: Math.round(shortageQty),
-                runningPieces: currentRunningPieces,
-                timestamp: dateShortage,
-                notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (-${Math.round(shortageQty)} pcs)`,
-              },
-            });
-          } else if (shortageQty < 0) {
-            const surplusPieces = Math.round(Math.abs(shortageQty));
-            currentRunningPieces += surplusPieces;
-            await tx.fabricLedgerEntry.create({
-              data: {
-                partyId,
-                partyChallanNo,
-                inwardId: inward.id,
-                inwardItemId: inwardItem.id,
-                itemCategory: "PIECES",
-                fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                unit: "PIECES",
-                movementType: "INWARD_SURPLUS",
-                referenceNumber: igpNumber,
-                creditMeters: 0,
-                debitMeters: 0,
-                shrinkageMeters: 0,
-                creditPieces: surplusPieces,
-                debitPieces: 0,
-                shortagePieces: 0,
-                runningPieces: currentRunningPieces,
-                timestamp: dateShortage,
-                notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (+${surplusPieces} pcs)`,
-              },
-            });
-          }
         } else {
           const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
+          const stdMeasured = item.unit === "YARDS" ? yardsToMeters(item.measuredQty) : item.measuredQty;
+          // stdSignedShortage: positive = shortage (claimed > measured), negative = surplus (claimed < measured)
+          const stdSignedShortage = Number((stdClaimed - stdMeasured).toFixed(2));
           const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+          const diffText =
+            shortageQty > 0
+              ? ` (-${shortageQty}${unitSuffix})`
+              : shortageQty < 0
+              ? ` (+${Math.abs(shortageQty)}${unitSuffix})`
+              : "";
+          const notes = `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}] vs [Measured: ${item.measuredQty} ${unitSuffix}]${diffText}`;
 
-          currentRunningBalance = Number((currentRunningBalance + stdClaimed).toFixed(2));
           await tx.fabricLedgerEntry.create({
             data: {
               partyId,
@@ -370,57 +329,12 @@ export async function createPartyInwardAction(
               referenceNumber: igpNumber,
               creditMeters: stdClaimed,
               debitMeters: 0,
-              shrinkageMeters: 0,
-              runningBalance: currentRunningBalance,
+              shrinkageMeters: stdSignedShortage,
+              runningBalance: 0,
               timestamp: dateClaimed,
-              notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}]`,
+              notes,
             },
           });
-
-          if (shortageQty > 0) {
-            currentRunningBalance = Number((currentRunningBalance - stdShortage).toFixed(2));
-            await tx.fabricLedgerEntry.create({
-              data: {
-                partyId,
-                partyChallanNo,
-                inwardId: inward.id,
-                inwardItemId: inwardItem.id,
-                itemCategory: "CONTINUOUS",
-                fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                unit: item.unit,
-                movementType: "INWARD_SHORTAGE",
-                referenceNumber: igpNumber,
-                creditMeters: 0,
-                debitMeters: 0,
-                shrinkageMeters: stdShortage,
-                runningBalance: currentRunningBalance,
-                timestamp: dateShortage,
-                notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (-${shortageQty}${unitSuffix})`,
-              },
-            });
-          } else if (shortageQty < 0) {
-            const surplusQty = Number(Math.abs(shortageQty).toFixed(2));
-            currentRunningBalance = Number((currentRunningBalance + stdSurplus).toFixed(2));
-            await tx.fabricLedgerEntry.create({
-              data: {
-                partyId,
-                partyChallanNo,
-                inwardId: inward.id,
-                inwardItemId: inwardItem.id,
-                itemCategory: "CONTINUOUS",
-                fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                unit: item.unit,
-                movementType: "INWARD_SURPLUS",
-                referenceNumber: igpNumber,
-                creditMeters: stdSurplus,
-                debitMeters: 0,
-                shrinkageMeters: 0,
-                runningBalance: currentRunningBalance,
-                timestamp: dateShortage,
-                notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (+${surplusQty}${unitSuffix})`,
-              },
-            });
-          }
         }
       }
 
@@ -603,17 +517,10 @@ export async function updateFabricInwardAction(
           const shortageQty = Number((item.challanQty - item.measuredQty).toFixed(2));
 
           let stdMeters: number | null = null;
-          let stdShortage: number = 0;
-          let stdSurplus: number = 0;
-
           if (item.unit === "YARDS") {
             stdMeters = yardsToMeters(item.measuredQty);
-            stdShortage = shortageQty > 0 ? yardsToMeters(shortageQty) : 0;
-            stdSurplus = shortageQty < 0 ? yardsToMeters(Math.abs(shortageQty)) : 0;
           } else if (item.unit === "METERS") {
             stdMeters = item.measuredQty;
-            stdShortage = shortageQty > 0 ? shortageQty : 0;
-            stdSurplus = shortageQty < 0 ? Math.abs(shortageQty) : 0;
           }
 
           const inwardItem = await tx.fabricInwardItem.create({
@@ -632,6 +539,15 @@ export async function updateFabricInwardAction(
           });
 
           if (item.unit === "PIECES") {
+            const shortagePieces = Math.round(shortageQty); // positive = shortage, negative = surplus
+            const diffText =
+              shortagePieces > 0
+                ? ` (-${shortagePieces} pcs)`
+                : shortagePieces < 0
+                ? ` (+${Math.abs(shortagePieces)} pcs)`
+                : "";
+            const notes = `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs] vs [Measured: ${Math.round(item.measuredQty)} pcs]${diffText}`;
+
             await tx.fabricLedgerEntry.create({
               data: {
                 partyId: existing.partyId,
@@ -648,64 +564,25 @@ export async function updateFabricInwardAction(
                 shrinkageMeters: 0,
                 creditPieces: Math.round(item.challanQty),
                 debitPieces: 0,
-                shortagePieces: 0,
+                shortagePieces: shortagePieces,
                 runningPieces: 0,
                 timestamp: dateClaimed,
-                notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs]`,
+                notes,
               },
             });
-
-            if (shortageQty > 0) {
-              await tx.fabricLedgerEntry.create({
-                data: {
-                  partyId: existing.partyId,
-                  partyChallanNo,
-                  inwardId: existing.id,
-                  inwardItemId: inwardItem.id,
-                  itemCategory: "PIECES",
-                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                  unit: "PIECES",
-                  movementType: "INWARD_SHORTAGE",
-                  referenceNumber: existing.igpNumber,
-                  creditMeters: 0,
-                  debitMeters: 0,
-                  shrinkageMeters: 0,
-                  creditPieces: 0,
-                  debitPieces: 0,
-                  shortagePieces: Math.round(shortageQty),
-                  runningPieces: 0,
-                  timestamp: dateVariance,
-                  notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (-${Math.round(shortageQty)} pcs)`,
-                },
-              });
-            } else if (shortageQty < 0) {
-              const surplusPieces = Math.round(Math.abs(shortageQty));
-              await tx.fabricLedgerEntry.create({
-                data: {
-                  partyId: existing.partyId,
-                  partyChallanNo,
-                  inwardId: existing.id,
-                  inwardItemId: inwardItem.id,
-                  itemCategory: "PIECES",
-                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                  unit: "PIECES",
-                  movementType: "INWARD_SURPLUS",
-                  referenceNumber: existing.igpNumber,
-                  creditMeters: 0,
-                  debitMeters: 0,
-                  shrinkageMeters: 0,
-                  creditPieces: surplusPieces,
-                  debitPieces: 0,
-                  shortagePieces: 0,
-                  runningPieces: 0,
-                  timestamp: dateVariance,
-                  notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (+${surplusPieces} pcs)`,
-                },
-              });
-            }
           } else {
             const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
+            const stdMeasured = item.unit === "YARDS" ? yardsToMeters(item.measuredQty) : item.measuredQty;
+            // stdSignedShortage: positive = shortage (claimed > measured), negative = surplus (claimed < measured)
+            const stdSignedShortage = Number((stdClaimed - stdMeasured).toFixed(2));
             const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+            const diffText =
+              shortageQty > 0
+                ? ` (-${shortageQty}${unitSuffix})`
+                : shortageQty < 0
+                ? ` (+${Math.abs(shortageQty)}${unitSuffix})`
+                : "";
+            const notes = `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}] vs [Measured: ${item.measuredQty} ${unitSuffix}]${diffText}`;
 
             await tx.fabricLedgerEntry.create({
               data: {
@@ -720,55 +597,12 @@ export async function updateFabricInwardAction(
                 referenceNumber: existing.igpNumber,
                 creditMeters: stdClaimed,
                 debitMeters: 0,
-                shrinkageMeters: 0,
+                shrinkageMeters: stdSignedShortage,
                 runningBalance: 0,
                 timestamp: dateClaimed,
-                notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}]`,
+                notes,
               },
             });
-
-            if (shortageQty > 0) {
-              await tx.fabricLedgerEntry.create({
-                data: {
-                  partyId: existing.partyId,
-                  partyChallanNo,
-                  inwardId: existing.id,
-                  inwardItemId: inwardItem.id,
-                  itemCategory: "CONTINUOUS",
-                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                  unit: item.unit,
-                  movementType: "INWARD_SHORTAGE",
-                  referenceNumber: existing.igpNumber,
-                  creditMeters: 0,
-                  debitMeters: 0,
-                  shrinkageMeters: stdShortage,
-                  runningBalance: 0,
-                  timestamp: dateVariance,
-                  notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (-${shortageQty}${unitSuffix})`,
-                },
-              });
-            } else if (shortageQty < 0) {
-              const surplusQty = Number(Math.abs(shortageQty).toFixed(2));
-              await tx.fabricLedgerEntry.create({
-                data: {
-                  partyId: existing.partyId,
-                  partyChallanNo,
-                  inwardId: existing.id,
-                  inwardItemId: inwardItem.id,
-                  itemCategory: "CONTINUOUS",
-                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
-                  unit: item.unit,
-                  movementType: "INWARD_SURPLUS",
-                  referenceNumber: existing.igpNumber,
-                  creditMeters: stdSurplus,
-                  debitMeters: 0,
-                  shrinkageMeters: 0,
-                  runningBalance: 0,
-                  timestamp: dateVariance,
-                  notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (+${surplusQty}${unitSuffix})`,
-                },
-              });
-            }
           }
         }
 

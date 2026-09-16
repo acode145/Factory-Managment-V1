@@ -285,17 +285,19 @@ export default function PartyRunningLedger({
             <div className="text-zinc-500 text-xs font-medium flex items-center justify-between">
               <span className="flex items-center gap-1">
                 <TrendingDown className="w-3.5 h-3.5 text-rose-600" />
-                <span>Loss / Shortage</span>
+                <span>Loss / Variance</span>
               </span>
-              <span className="text-[10px] font-mono text-zinc-400">Shrinkage</span>
+              <span className="text-[10px] font-mono text-zinc-400">Shortage / Excess</span>
             </div>
             <div className="space-y-0.5">
-              <div className="text-lg font-bold font-mono text-rose-800">
-                -{contShrinkage.toFixed(2)}m
+              <div className={`text-lg font-bold font-mono ${contShrinkage > 0 ? "text-rose-800" : contShrinkage < 0 ? "text-emerald-800" : "text-zinc-700"}`}>
+                {contShrinkage > 0 ? `-${contShrinkage.toFixed(2)}m` : contShrinkage < 0 ? `+${Math.abs(contShrinkage).toFixed(2)}m` : "0.00m"}
               </div>
               <div className="text-[10px] text-zinc-500 font-mono flex items-center justify-between">
-                <span>≈ {metersToYards(contShrinkage).toFixed(1)} yd</span>
-                <span className="font-semibold text-rose-700">-{piecesShortage.toLocaleString()} pcs</span>
+                <span>≈ {metersToYards(Math.abs(contShrinkage)).toFixed(1)} yd</span>
+                <span className={`font-semibold ${piecesShortage > 0 ? "text-rose-700" : piecesShortage < 0 ? "text-emerald-700" : "text-zinc-600"}`}>
+                  {piecesShortage > 0 ? `-${piecesShortage.toLocaleString()} pcs` : piecesShortage < 0 ? `+${Math.abs(piecesShortage).toLocaleString()} pcs` : "0 pcs"}
+                </span>
               </div>
             </div>
           </div>
@@ -373,7 +375,7 @@ export default function PartyRunningLedger({
                 <th className="py-2.5 px-3">Fabric & Details</th>
                 <th className="py-2.5 px-3 text-right">Inward (+)</th>
                 <th className="py-2.5 px-3 text-right">Outward / Delivery (-)</th>
-                <th className="py-2.5 px-3 text-right">Shortage / Loss (-)</th>
+                <th className="py-2.5 px-3 text-right">Shortage / Excess (-+)</th>
                 <th className="py-2.5 px-3 text-right">
                   {selectedChallan !== "ALL" ? "Lot Balance" : "Running Stock"}
                 </th>
@@ -415,7 +417,7 @@ export default function PartyRunningLedger({
 
                   const credFmt = formatMetric(cMeters);
                   const debFmt = formatMetric(dMeters);
-                  const shrinkFmt = formatMetric(sMeters);
+                  const shrinkFmt = formatMetric(Math.abs(sMeters));
                   const balFmt = formatMetric(rawBal) || { primary: "0.00 m", secondary: "0.00 yd" };
 
                   return (
@@ -463,13 +465,20 @@ export default function PartyRunningLedger({
                         )}
                       </td>
 
-                      {/* SHRINKAGE (-) */}
+                      {/* SHORTAGE / EXCESS (-+) */}
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        {shrinkFmt ? (
-                          <div>
-                            <span className="text-rose-700 font-semibold">-{shrinkFmt.primary}</span>
-                            <span className="block text-[10px] text-zinc-400">{shrinkFmt.secondary}</span>
-                          </div>
+                        {sMeters !== 0 && shrinkFmt ? (
+                          sMeters > 0 ? (
+                            <div>
+                              <span className="text-rose-700 font-semibold">-{shrinkFmt.primary}</span>
+                              <span className="block text-[10px] text-zinc-400">{shrinkFmt.secondary}</span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-emerald-700 font-semibold">+{shrinkFmt.primary}</span>
+                              <span className="block text-[10px] text-zinc-400">{shrinkFmt.secondary}</span>
+                            </div>
+                          )
                         ) : (
                           <span className="text-zinc-300">—</span>
                         )}
@@ -524,7 +533,7 @@ export default function PartyRunningLedger({
                 <th className="py-2.5 px-3">Garment Component / Details</th>
                 <th className="py-2.5 px-3 text-right">Inward (+) [pcs]</th>
                 <th className="py-2.5 px-3 text-right">Outward (-) [pcs]</th>
-                <th className="py-2.5 px-3 text-right">Shortage (-) [pcs]</th>
+                <th className="py-2.5 px-3 text-right">Shortage / Excess (-+) [pcs]</th>
                 <th className="py-2.5 px-3 text-right">
                   {selectedChallan !== "ALL" ? "Lot Balance [pcs]" : "Running Balance [pcs]"}
                 </th>
@@ -591,12 +600,18 @@ export default function PartyRunningLedger({
                         )}
                       </td>
 
-                      {/* SHORTAGE (-) */}
+                      {/* SHORTAGE / EXCESS (-+) */}
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        {shortPcs > 0 ? (
-                          <span className="text-rose-700 font-semibold">
-                            -{shortPcs.toLocaleString()} pcs
-                          </span>
+                        {shortPcs !== 0 ? (
+                          shortPcs > 0 ? (
+                            <span className="text-rose-700 font-semibold">
+                              -{shortPcs.toLocaleString()} pcs
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 font-semibold">
+                              +{Math.abs(shortPcs).toLocaleString()} pcs
+                            </span>
+                          )
                         ) : (
                           <span className="text-zinc-300">—</span>
                         )}
@@ -674,10 +689,16 @@ export default function PartyRunningLedger({
                             -{(entry.debitPieces || 0).toLocaleString()} pcs
                           </span>
                         )}
-                        {(entry.shortagePieces || 0) > 0 && (
-                          <span className="text-rose-700 font-bold block">
-                            -{(entry.shortagePieces || 0).toLocaleString()} pcs
-                          </span>
+                        {(entry.shortagePieces || 0) !== 0 && (
+                          (entry.shortagePieces || 0) > 0 ? (
+                            <span className="text-rose-700 font-bold block">
+                              -{(entry.shortagePieces || 0).toLocaleString()} pcs
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 font-bold block">
+                              +{Math.abs(entry.shortagePieces || 0).toLocaleString()} pcs
+                            </span>
+                          )
                         )}
                       </>
                     ) : (
@@ -702,15 +723,26 @@ export default function PartyRunningLedger({
                             </span>
                           </div>
                         )}
-                        {Number(entry.shrinkageMeters || 0) > 0 && (
-                          <div>
-                            <span className="text-rose-700 font-bold">
-                              -{Number(entry.shrinkageMeters).toFixed(2)}m
-                            </span>
-                            <span className="text-[10px] text-zinc-400 block">
-                              ≈ {metersToYards(Number(entry.shrinkageMeters)).toFixed(1)} yd
-                            </span>
-                          </div>
+                        {Number(entry.shrinkageMeters || 0) !== 0 && (
+                          Number(entry.shrinkageMeters || 0) > 0 ? (
+                            <div>
+                              <span className="text-rose-700 font-bold">
+                                -{Number(entry.shrinkageMeters).toFixed(2)}m
+                              </span>
+                              <span className="text-[10px] text-zinc-400 block">
+                                ≈ {metersToYards(Number(entry.shrinkageMeters)).toFixed(1)} yd
+                              </span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-emerald-700 font-bold">
+                                +{Math.abs(Number(entry.shrinkageMeters)).toFixed(2)}m
+                              </span>
+                              <span className="text-[10px] text-zinc-400 block">
+                                ≈ {metersToYards(Math.abs(Number(entry.shrinkageMeters))).toFixed(1)} yd
+                              </span>
+                            </div>
+                          )
                         )}
                       </>
                     )}

@@ -206,12 +206,18 @@ export default async function DashboardPage({
     .reduce((acc: number, curr: any) => acc + (Number(curr.sentMeters) - Number(curr.accountedMeters || 0)), 0);
 
   const totalShortagesFlagged = ledgerEntries
-    .filter((e: any) => e.movementType === "INWARD_SHORTAGE" && e.itemCategory !== "PIECES")
-    .reduce((acc: number, curr: any) => acc + Number(curr.shrinkageMeters || 0), 0);
+    .filter((e: any) => e.itemCategory !== "PIECES")
+    .reduce((acc: number, curr: any) => {
+      const s = Number(curr.shrinkageMeters || 0);
+      return acc + (s > 0 ? s : 0);
+    }, 0);
 
   const totalPieceShortages = ledgerEntries
-    .filter((e: any) => e.movementType === "INWARD_SHORTAGE" && e.itemCategory === "PIECES")
-    .reduce((acc: number, curr: any) => acc + (curr.shortagePieces || 0), 0);
+    .filter((e: any) => e.itemCategory === "PIECES")
+    .reduce((acc: number, curr: any) => {
+      const sp = Number(curr.shortagePieces || 0);
+      return acc + (sp > 0 ? sp : 0);
+    }, 0);
   return (
     <div className="min-h-screen flex flex-col bg-zinc-100">
       <Header session={session} />
