@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { createPartyInwardAction, FabricActionState } from "@/actions/fabric";
 import {
   PackagePlus,
@@ -36,6 +36,25 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
     createPartyInwardAction,
     {}
   );
+
+  const [formKey, setFormKey] = useState(0);
+
+  useEffect(() => {
+    if (state?.success) {
+      setRows([
+        {
+          id: 'row-' + Date.now(),
+          fabricType: '',
+          colorShade: '',
+          unit: 'METERS',
+          rollCount: '1',
+          challanQty: '',
+          measuredQty: '',
+        },
+      ]);
+      setFormKey((k) => k + 1);
+    }
+  }, [state]);
 
   const [rows, setRows] = useState<InwardRowState[]>([
     {
@@ -132,7 +151,7 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
         </div>
       )}
 
-      <form action={formAction} className="space-y-6">
+      <form key={formKey} action={formAction} className="space-y-6">
         {/* Top Header Card: Date first, then Party, then Challan #, then Merged Remarks */}
         <div className="p-4 rounded-xl bg-zinc-50/70 border border-zinc-200 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
