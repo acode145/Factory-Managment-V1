@@ -449,12 +449,6 @@ const UpdateInwardSchema = z.object({
   inwardId: z.string().min(1, "Inward record ID is required"),
   challanDate: z.string().optional(),
   partyChallanNo: z.string().trim().min(1, "Party Challan # is required"),
-  fabricType: z.string().trim().min(1, "Fabric type is required"),
-  colorShade: z.string().trim().min(1, "Color / Shade is required"),
-  rollCount: z.coerce.number().int().positive("Roll count must be greater than 0"),
-  challanMeters: z.coerce.number().positive("Party Challan meterage must be positive"),
-  measuredMeters: z.coerce.number().positive("Physical measured meterage must be positive"),
-  driverDetails: z.string().optional(),
   remarks: z.string().optional(),
 });
 
@@ -464,45 +458,87 @@ export async function updateFabricInwardAction(
 ): Promise<FabricActionState> {
   const session = await requireAuth();
 
-  const rawData = {
+  const rawHeader = {
     inwardId: formData.get("inwardId"),
     challanDate: formData.get("challanDate") || undefined,
     partyChallanNo: formData.get("partyChallanNo"),
-    fabricType: formData.get("fabricType"),
-    colorShade: formData.get("colorShade"),
-    rollCount: formData.get("rollCount"),
-    challanMeters: formData.get("challanMeters"),
-    measuredMeters: formData.get("measuredMeters"),
-    driverDetails: formData.get("driverDetails") || undefined,
     remarks: formData.get("remarks") || undefined,
   };
 
-  const parsed = UpdateInwardSchema.safeParse(rawData);
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0].message };
+  const parsedHeader = UpdateInwardSchema.safeParse(rawHeader);
+  if (!parsedHeader.success) {
+    return { error: parsedHeader.error.issues[0].message };
   }
 
-  const {
-    inwardId,
-    challanDate,
-    partyChallanNo,
-    fabricType,
-    colorShade,
-    rollCount,
-    challanMeters,
-    measuredMeters,
-    driverDetails,
-    remarks,
-  } = parsed.data;
+  const { inwardId, challanDate, partyChallanNo, remarks } = parsedHeader.data;
+
+  let itemsToUpdate: Array<z.infer<typeof InwardItemSchema>> = [];
+  const itemsPayloadStr = formData.get("itemsPayload") as string | null;
+
+  if (itemsPayloadStr) {
+    try {
+      const parsedArray = JSON.parse(itemsPayloadStr);
+      if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
+        return { error: "Please add at least one fabric / item row." };
+      }
+      for (let i = 0; i < parsedArray.length; i++) {
+        const itemRes = InwardItemSchema.safeParse(parsedArray[i]);
+        if (!itemRes.success) {
+          return { error: `Item ${i + 1}: ${itemRes.error.issues[0].message}` };
+        }
+        itemsToUpdate.push(itemRes.data);
+      }
+    } catch {
+      return { error: "Invalid items payload format." };
+    }
+  } else {
+    // Fallback for legacy single-item callers
+    const singleParsed = InwardItemSchema.safeParse({
+      fabricType: formData.get("fabricType"),
+      colorShade: formData.get("colorShade"),
+      unit: "METERS",
+      rollCount: formData.get("rollCount"),
+      challanQty: formData.get("challanMeters"),
+      measuredQty: formData.get("measuredMeters"),
+    });
+    if (!singleParsed.success) {
+      return { error: singleParsed.error.issues[0].message };
+    }
+    itemsToUpdate.push(singleParsed.data);
+  }
 
   const dateClaimed = parseLedgerDate(challanDate, 0);
-  const dateShortage = parseLedgerDate(challanDate, 1);
-  const newShortage = Number((challanMeters - measuredMeters).toFixed(2));
+  const dateVariance = parseLedgerDate(challanDate, 1);
+
+  let totalRolls = 0;
+  let totalContinuousClaimedMeters = 0;
+  let totalContinuousMeasuredMeters = 0;
+  let totalContinuousShortageMeters = 0;
+
+  for (const item of itemsToUpdate) {
+    totalRolls += item.rollCount;
+    if (item.unit !== "PIECES") {
+      const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
+      const stdMeasured = item.unit === "YARDS" ? yardsToMeters(item.measuredQty) : item.measuredQty;
+      const stdShort = Math.max(0, Number((stdClaimed - stdMeasured).toFixed(2)));
+
+      totalContinuousClaimedMeters += stdClaimed;
+      totalContinuousMeasuredMeters += stdMeasured;
+      totalContinuousShortageMeters += stdShort;
+    }
+  }
+
+  const primaryFabric =
+    itemsToUpdate.length === 1
+      ? itemsToUpdate[0].fabricType
+      : `Multi-Item (${itemsToUpdate.length} lots)`;
+  const primaryColor =
+    itemsToUpdate.length === 1 ? itemsToUpdate[0].colorShade : "Mixed";
 
   try {
     const existing = await prisma.fabricInward.findUnique({
       where: { id: inwardId },
-      include: { party: true },
+      include: { party: true, items: true },
     });
 
     if (!existing) {
@@ -510,27 +546,19 @@ export async function updateFabricInwardAction(
     }
 
     const changeParts: string[] = [];
-    const oldMeasured = Number(existing.measuredMeters);
-    const oldChallan = Number(existing.challanMeters);
-    if (oldMeasured !== measuredMeters) {
-      changeParts.push(`Measured: ${oldMeasured}m -> ${measuredMeters}m`);
-    }
-    if (oldChallan !== challanMeters) {
-      changeParts.push(`Claimed: ${oldChallan}m -> ${challanMeters}m`);
-    }
-    if (existing.rollCount !== rollCount) {
-      changeParts.push(`Rolls: ${existing.rollCount} -> ${rollCount}`);
-    }
     if (existing.partyChallanNo !== partyChallanNo) {
       changeParts.push(`Challan#: ${existing.partyChallanNo} -> ${partyChallanNo}`);
     }
-    if (existing.fabricType !== fabricType) {
-      changeParts.push(`Fabric: ${existing.fabricType} -> ${fabricType}`);
+    if (Number(existing.rollCount) !== totalRolls) {
+      changeParts.push(`Packs: ${existing.rollCount} -> ${totalRolls}`);
     }
-    if (existing.colorShade !== colorShade) {
-      changeParts.push(`Shade: ${existing.colorShade} -> ${colorShade}`);
+    if (Number(existing.measuredMeters) !== Number(totalContinuousMeasuredMeters.toFixed(2))) {
+      changeParts.push(`Measured Cont.: ${Number(existing.measuredMeters)}m -> ${totalContinuousMeasuredMeters.toFixed(2)}m`);
     }
-    const changesSummary = changeParts.length > 0 ? changeParts.join("; ") : "Details updated";
+    if (existing.items.length !== itemsToUpdate.length) {
+      changeParts.push(`Lots: ${existing.items.length} -> ${itemsToUpdate.length}`);
+    }
+    const changesSummary = changeParts.length > 0 ? changeParts.join("; ") : "Lots / details updated";
 
     const pastHistory = Array.isArray(existing.editHistory) ? (existing.editHistory as any[]) : [];
     const auditEntry = {
@@ -541,147 +569,220 @@ export async function updateFabricInwardAction(
     };
     const newHistory = [...pastHistory, auditEntry];
 
-    await prisma.$transaction(async (tx: any) => {
-      await tx.fabricInward.update({
-        where: { id: inwardId },
-        data: {
-          challanDate: dateClaimed,
-          partyChallanNo,
-          fabricType,
-          colorShade,
-          rollCount,
-          challanMeters,
-          measuredMeters,
-          shortageMeters: newShortage,
-          driverDetails,
-          remarks,
-          editHistory: newHistory,
-        },
-      });
-
-      const inwardEntry = await tx.fabricLedgerEntry.findFirst({
-        where: {
-          partyId: existing.partyId,
-          referenceNumber: existing.igpNumber,
-          movementType: "PARTY_INWARD",
-        },
-      });
-
-      if (inwardEntry) {
-        await tx.fabricLedgerEntry.update({
-          where: { id: inwardEntry.id },
+    await prisma.$transaction(
+      async (tx: any) => {
+        // 1. Update Inward Header
+        await tx.fabricInward.update({
+          where: { id: inwardId },
           data: {
-            creditMeters: challanMeters,
+            challanDate: dateClaimed,
             partyChallanNo,
-            inwardId: existing.id,
-            timestamp: dateClaimed,
-            notes: `Inward Challan #${partyChallanNo} (${rollCount} rolls of ${colorShade} ${fabricType}) [Edited]`,
+            fabricType: primaryFabric,
+            colorShade: primaryColor,
+            rollCount: totalRolls,
+            challanMeters: Number(totalContinuousClaimedMeters.toFixed(2)),
+            measuredMeters: Number(totalContinuousMeasuredMeters.toFixed(2)),
+            shortageMeters: Number(totalContinuousShortageMeters.toFixed(2)),
+            remarks,
+            editHistory: newHistory,
           },
         });
-      }
 
-      const shortageEntry = await tx.fabricLedgerEntry.findFirst({
-        where: {
-          partyId: existing.partyId,
-          referenceNumber: existing.igpNumber,
-          movementType: "INWARD_SHORTAGE",
-        },
-      });
+        // 2. Remove previous ledger entries and items for this inward
+        await tx.fabricLedgerEntry.deleteMany({
+          where: { inwardId },
+        });
 
-      const surplusEntry = await tx.fabricLedgerEntry.findFirst({
-        where: {
-          partyId: existing.partyId,
-          referenceNumber: existing.igpNumber,
-          movementType: "INWARD_SURPLUS",
-        },
-      });
+        await tx.fabricInwardItem.deleteMany({
+          where: { inwardId },
+        });
 
-      if (newShortage > 0) {
-        if (surplusEntry) {
-          await tx.fabricLedgerEntry.delete({ where: { id: surplusEntry.id } });
-        }
-        if (shortageEntry) {
-          await tx.fabricLedgerEntry.update({
-            where: { id: shortageEntry.id },
+        // 3. Create updated items and updated ledger entries
+        for (let idx = 0; idx < itemsToUpdate.length; idx++) {
+          const item = itemsToUpdate[idx];
+          const shortageQty = Number((item.challanQty - item.measuredQty).toFixed(2));
+
+          let stdMeters: number | null = null;
+          let stdShortage: number = 0;
+          let stdSurplus: number = 0;
+
+          if (item.unit === "YARDS") {
+            stdMeters = yardsToMeters(item.measuredQty);
+            stdShortage = shortageQty > 0 ? yardsToMeters(shortageQty) : 0;
+            stdSurplus = shortageQty < 0 ? yardsToMeters(Math.abs(shortageQty)) : 0;
+          } else if (item.unit === "METERS") {
+            stdMeters = item.measuredQty;
+            stdShortage = shortageQty > 0 ? shortageQty : 0;
+            stdSurplus = shortageQty < 0 ? Math.abs(shortageQty) : 0;
+          }
+
+          const inwardItem = await tx.fabricInwardItem.create({
             data: {
-              shrinkageMeters: newShortage,
-              partyChallanNo,
               inwardId: existing.id,
-              timestamp: dateShortage,
-              notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
+              itemIndex: idx,
+              fabricType: item.fabricType,
+              colorShade: item.colorShade,
+              unit: item.unit,
+              rollCount: item.rollCount,
+              challanQty: item.challanQty,
+              measuredQty: item.measuredQty,
+              shortageQty: Math.max(0, shortageQty),
+              standardMeters: stdMeters,
             },
           });
-        } else {
-          await tx.fabricLedgerEntry.create({
-            data: {
-              partyId: existing.partyId,
-              partyChallanNo,
-              inwardId: existing.id,
-              movementType: "INWARD_SHORTAGE",
-              referenceNumber: existing.igpNumber,
-              creditMeters: 0,
-              debitMeters: 0,
-              shrinkageMeters: newShortage,
-              runningBalance: 0,
-              timestamp: dateShortage,
-              notes: `Inward Shortage: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (-${newShortage.toFixed(2)}m) [Edited]`,
-            },
-          });
-        }
-      } else if (newShortage < 0) {
-        const surplusMeters = Number(Math.abs(newShortage).toFixed(2));
-        if (shortageEntry) {
-          await tx.fabricLedgerEntry.delete({ where: { id: shortageEntry.id } });
-        }
-        if (surplusEntry) {
-          await tx.fabricLedgerEntry.update({
-            where: { id: surplusEntry.id },
-            data: {
-              creditMeters: surplusMeters,
-              partyChallanNo,
-              inwardId: existing.id,
-              timestamp: dateShortage,
-              notes: `Inward Surplus: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (+${surplusMeters.toFixed(2)}m) [Edited]`,
-            },
-          });
-        } else {
-          await tx.fabricLedgerEntry.create({
-            data: {
-              partyId: existing.partyId,
-              partyChallanNo,
-              inwardId: existing.id,
-              movementType: "INWARD_SURPLUS",
-              referenceNumber: existing.igpNumber,
-              creditMeters: surplusMeters,
-              debitMeters: 0,
-              shrinkageMeters: 0,
-              runningBalance: 0,
-              timestamp: dateShortage,
-              notes: `Inward Surplus: Challan #${partyChallanNo} claimed ${challanMeters.toFixed(2)}m vs measured ${measuredMeters.toFixed(2)}m (+${surplusMeters.toFixed(2)}m) [Edited]`,
-            },
-          });
-        }
-      } else {
-        if (shortageEntry) {
-          await tx.fabricLedgerEntry.delete({
-            where: { id: shortageEntry.id },
-          });
-        }
-        if (surplusEntry) {
-          await tx.fabricLedgerEntry.delete({
-            where: { id: surplusEntry.id },
-          });
-        }
-      }
 
-      await reconcilePartyLedger(tx, existing.partyId);
-    }, { maxWait: 15000, timeout: 45000 });
+          if (item.unit === "PIECES") {
+            await tx.fabricLedgerEntry.create({
+              data: {
+                partyId: existing.partyId,
+                partyChallanNo,
+                inwardId: existing.id,
+                inwardItemId: inwardItem.id,
+                itemCategory: "PIECES",
+                fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                unit: "PIECES",
+                movementType: "PARTY_INWARD",
+                referenceNumber: existing.igpNumber,
+                creditMeters: 0,
+                debitMeters: 0,
+                shrinkageMeters: 0,
+                creditPieces: Math.round(item.challanQty),
+                debitPieces: 0,
+                shortagePieces: 0,
+                runningPieces: 0,
+                timestamp: dateClaimed,
+                notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} pkgs of ${item.fabricType} (${item.colorShade}) [Claimed: ${Math.round(item.challanQty)} pcs]`,
+              },
+            });
+
+            if (shortageQty > 0) {
+              await tx.fabricLedgerEntry.create({
+                data: {
+                  partyId: existing.partyId,
+                  partyChallanNo,
+                  inwardId: existing.id,
+                  inwardItemId: inwardItem.id,
+                  itemCategory: "PIECES",
+                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                  unit: "PIECES",
+                  movementType: "INWARD_SHORTAGE",
+                  referenceNumber: existing.igpNumber,
+                  creditMeters: 0,
+                  debitMeters: 0,
+                  shrinkageMeters: 0,
+                  creditPieces: 0,
+                  debitPieces: 0,
+                  shortagePieces: Math.round(shortageQty),
+                  runningPieces: 0,
+                  timestamp: dateVariance,
+                  notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (-${Math.round(shortageQty)} pcs)`,
+                },
+              });
+            } else if (shortageQty < 0) {
+              const surplusPieces = Math.round(Math.abs(shortageQty));
+              await tx.fabricLedgerEntry.create({
+                data: {
+                  partyId: existing.partyId,
+                  partyChallanNo,
+                  inwardId: existing.id,
+                  inwardItemId: inwardItem.id,
+                  itemCategory: "PIECES",
+                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                  unit: "PIECES",
+                  movementType: "INWARD_SURPLUS",
+                  referenceNumber: existing.igpNumber,
+                  creditMeters: 0,
+                  debitMeters: 0,
+                  shrinkageMeters: 0,
+                  creditPieces: surplusPieces,
+                  debitPieces: 0,
+                  shortagePieces: 0,
+                  runningPieces: 0,
+                  timestamp: dateVariance,
+                  notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${Math.round(item.challanQty)} pcs vs measured ${Math.round(item.measuredQty)} pcs (+${surplusPieces} pcs)`,
+                },
+              });
+            }
+          } else {
+            const stdClaimed = item.unit === "YARDS" ? yardsToMeters(item.challanQty) : item.challanQty;
+            const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+
+            await tx.fabricLedgerEntry.create({
+              data: {
+                partyId: existing.partyId,
+                partyChallanNo,
+                inwardId: existing.id,
+                inwardItemId: inwardItem.id,
+                itemCategory: "CONTINUOUS",
+                fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                unit: item.unit,
+                movementType: "PARTY_INWARD",
+                referenceNumber: existing.igpNumber,
+                creditMeters: stdClaimed,
+                debitMeters: 0,
+                shrinkageMeters: 0,
+                runningBalance: 0,
+                timestamp: dateClaimed,
+                notes: `Inward Challan #${partyChallanNo} - ${item.rollCount} rolls of ${item.fabricType} (${item.colorShade}) [Claimed: ${item.challanQty} ${unitSuffix}]`,
+              },
+            });
+
+            if (shortageQty > 0) {
+              await tx.fabricLedgerEntry.create({
+                data: {
+                  partyId: existing.partyId,
+                  partyChallanNo,
+                  inwardId: existing.id,
+                  inwardItemId: inwardItem.id,
+                  itemCategory: "CONTINUOUS",
+                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                  unit: item.unit,
+                  movementType: "INWARD_SHORTAGE",
+                  referenceNumber: existing.igpNumber,
+                  creditMeters: 0,
+                  debitMeters: 0,
+                  shrinkageMeters: stdShortage,
+                  runningBalance: 0,
+                  timestamp: dateVariance,
+                  notes: `Inward Shortage: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (-${shortageQty}${unitSuffix})`,
+                },
+              });
+            } else if (shortageQty < 0) {
+              const surplusQty = Number(Math.abs(shortageQty).toFixed(2));
+              await tx.fabricLedgerEntry.create({
+                data: {
+                  partyId: existing.partyId,
+                  partyChallanNo,
+                  inwardId: existing.id,
+                  inwardItemId: inwardItem.id,
+                  itemCategory: "CONTINUOUS",
+                  fabricDescription: `${item.fabricType} (${item.colorShade})`,
+                  unit: item.unit,
+                  movementType: "INWARD_SURPLUS",
+                  referenceNumber: existing.igpNumber,
+                  creditMeters: stdSurplus,
+                  debitMeters: 0,
+                  shrinkageMeters: 0,
+                  runningBalance: 0,
+                  timestamp: dateVariance,
+                  notes: `Inward Surplus: #${partyChallanNo} ${item.fabricType} claimed ${item.challanQty}${unitSuffix} vs measured ${item.measuredQty}${unitSuffix} (+${surplusQty}${unitSuffix})`,
+                },
+              });
+            }
+          }
+        }
+
+        // 4. Reconcile party ledger
+        await reconcilePartyLedger(tx, existing.partyId);
+      },
+      { maxWait: 15000, timeout: 45000 }
+    );
 
     revalidatePath("/dashboard");
     revalidatePath("/ledger");
     return {
       success: true,
-      message: `Inward Receipt ${existing.igpNumber} updated. Audit recorded and party ledger reconciled.`,
+      message: `Inward Receipt ${existing.igpNumber} updated successfully. Audit logged and ledger reconciled.`,
     };
   } catch (err: any) {
     console.error("Update inward error:", err);
