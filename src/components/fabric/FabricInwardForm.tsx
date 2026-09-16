@@ -133,11 +133,23 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
       )}
 
       <form action={formAction} className="space-y-6">
-        {/* Top Header Card: Party, Date, Challan # & Transport */}
+        {/* Top Header Card: Date first, then Party, then Challan #, then Merged Remarks */}
         <div className="p-4 rounded-xl bg-zinc-50/70 border border-zinc-200 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-            {/* Party Selector */}
-            <div className="sm:col-span-1">
+            {/* 1. Challan / Receiving Date (Moved first per requirement 5) */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
+                Challan / Receiving Date
+              </label>
+              <DatePicker
+                name="challanDate"
+                required
+                defaultValue={new Date().toISOString().split("T")[0]}
+              />
+            </div>
+
+            {/* 2. Client Party / Mill (Moved second per requirement 5) */}
+            <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
                 Client Party / Mill
               </label>
@@ -155,19 +167,7 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
               </select>
             </div>
 
-            {/* Challan Date */}
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-                Challan / Receiving Date
-              </label>
-              <DatePicker
-                name="challanDate"
-                required
-                defaultValue={new Date().toISOString().split("T")[0]}
-              />
-            </div>
-
-            {/* Party Challan # */}
+            {/* 3. Party Challan / Bilty # */}
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
                 Party Challan / Bilty #
@@ -182,48 +182,26 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-zinc-200/60">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                Vehicle & Driver Details
-              </label>
-              <input
-                type="text"
-                name="driverDetails"
-                placeholder="e.g. Aslam - Suzuki Ravi (LEA-1920)"
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                General Receiving Remarks
-              </label>
-              <input
-                type="text"
-                name="remarks"
-                placeholder="e.g. Received in sound condition, sealed bundles"
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
+          {/* Merged Single Field: REMARKS AND VEHICLE INFO (Requirement 1) */}
+          <div className="pt-2 border-t border-zinc-200/60">
+            <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+              REMARKS AND VEHICLE INFO
+            </label>
+            <input
+              type="text"
+              name="remarks"
+              placeholder="e.g. Aslam - Suzuki Ravi (LEA-1920) • Received in sound condition, sealed bundles"
+              className="w-full h-11 px-3.5 bg-white border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+            />
           </div>
         </div>
         {/* Multi-Item Lot Builder Section */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-zinc-700" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
-                Inward Items & Lots ({rows.length})
-              </h3>
-            </div>
-            <button
-              type="button"
-              onClick={addRow}
-              className="h-8 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Item Row</span>
-            </button>
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-zinc-700" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
+              Inward Items & Lots ({rows.length})
+            </h3>
           </div>
 
           {/* Table / Row cards */}
@@ -297,9 +275,9 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                     </div>
                   </div>
 
-                  {/* Row Input Fields Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                    {/* Fabric Type */}
+                  {/* Row Input Fields Grid (Reordered per user requirements 3 & 4) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                    {/* 1. Fabric Construction */}
                     <div className="sm:col-span-3">
                       <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
                         Fabric Construction
@@ -314,7 +292,7 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                       />
                     </div>
 
-                    {/* Color / Shade */}
+                    {/* 2. Color / Shade */}
                     <div className="sm:col-span-2">
                       <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
                         Color / Shade
@@ -324,15 +302,56 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                         required
                         value={row.colorShade}
                         onChange={(e) => updateRow(row.id, "colorShade", e.target.value)}
-                        placeholder="e.g. Greige, White, Brown"
+                        placeholder="e.g. Greige, White, Blue"
                         className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                       />
                     </div>
 
-                    {/* UOM Selector */}
+                    {/* 3. Pack (Title changed to Pack per requirement 4) */}
+                    <div className="sm:col-span-1">
+                      <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
+                        Pack
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={row.rollCount}
+                        onChange={(e) => updateRow(row.id, "rollCount", e.target.value)}
+                        placeholder="1"
+                        className="w-full h-10 px-2 bg-white border border-zinc-300 rounded-lg text-xs font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                      />
+                    </div>
+
+                    {/* 4. Claimed (step='any' completely fixes the .01 bug in pcs entry!) */}
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                          Claimed
+                        </label>
+                        {claimedCompanion && (
+                          <span className="text-[9px] font-mono font-medium text-emerald-700 bg-emerald-50 px-1 rounded">
+                            {claimedCompanion}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        required
+                        value={row.challanQty}
+                        onChange={(e) => updateRow(row.id, "challanQty", e.target.value)}
+                        placeholder={row.unit === "PIECES" ? "e.g. 200" : "e.g. 10000"}
+                        className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-mono font-semibold tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                      />
+                    </div>
+
+                    {/* 5. Unit (Moved after Claimed, title Unit, options M, Yd, Pcs per requirement 3) */}
                     <div className="sm:col-span-2">
                       <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
-                        Unit of Measure
+                        Unit
                       </label>
                       <select
                         value={row.unit}
@@ -343,59 +362,19 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                             e.target.value as "METERS" | "YARDS" | "PIECES"
                           )
                         }
-                        className="w-full h-10 px-2.5 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                        className="w-full h-10 px-2.5 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 cursor-pointer font-mono"
                       >
-                        <option value="METERS">Meters (m)</option>
-                        <option value="YARDS">Yards (yd)</option>
-                        <option value="PIECES">Pieces (pcs)</option>
+                        <option value="METERS">M</option>
+                        <option value="YARDS">Yd</option>
+                        <option value="PIECES">Pcs</option>
                       </select>
                     </div>
 
-                    {/* Rolls / Bundles */}
-                    <div className="sm:col-span-1">
-                      <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
-                        Rolls / Pkgs
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        value={row.rollCount}
-                        onChange={(e) => updateRow(row.id, "rollCount", e.target.value)}
-                        placeholder="1"
-                        className="w-full h-10 px-2 bg-white border border-zinc-300 rounded-lg text-xs font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                      />
-                    </div>
-
-                    {/* Claimed Qty */}
+                    {/* 6. Measured (step='any' fixes the .01 bug in pcs entry!) */}
                     <div className="sm:col-span-2">
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                          Claimed {row.unit === "PIECES" ? "Pcs" : row.unit === "YARDS" ? "Yds" : "Meters"}
-                        </label>
-                        {claimedCompanion && (
-                          <span className="text-[9px] font-mono font-medium text-emerald-700 bg-emerald-50 px-1 rounded">
-                            {claimedCompanion}
-                          </span>
-                        )}
-                      </div>
-                      <input
-                        type="number"
-                        step={row.unit === "PIECES" ? "1" : "0.01"}
-                        min="0.01"
-                        required
-                        value={row.challanQty}
-                        onChange={(e) => updateRow(row.id, "challanQty", e.target.value)}
-                        placeholder={row.unit === "PIECES" ? "e.g. 125" : "e.g. 10000.00"}
-                        className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-mono font-semibold tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                      />
-                    </div>
-
-                    {/* Measured Qty */}
-                    <div className="sm:col-span-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                          Measured {row.unit === "PIECES" ? "Pcs" : row.unit === "YARDS" ? "Yds" : "Meters"}
+                          Measured
                         </label>
                         {measuredCompanion && (
                           <span className="text-[9px] font-mono font-medium text-emerald-700 bg-emerald-50 px-1 rounded">
@@ -405,12 +384,12 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                       </div>
                       <input
                         type="number"
-                        step={row.unit === "PIECES" ? "1" : "0.01"}
-                        min="0.01"
+                        step="any"
+                        min="0"
                         required
                         value={row.measuredQty}
                         onChange={(e) => updateRow(row.id, "measuredQty", e.target.value)}
-                        placeholder={row.unit === "PIECES" ? "e.g. 124" : "e.g. 9900.00"}
+                        placeholder={row.unit === "PIECES" ? "e.g. 199" : "e.g. 9900"}
                         className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-lg text-xs font-mono font-semibold tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                       />
                     </div>
@@ -418,6 +397,16 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
                 </div>
               );
             })}
+
+            {/* Add Item Row Button - Full Width below last row (Requirement 2) */}
+            <button
+              type="button"
+              onClick={addRow}
+              className="w-full h-11 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs mt-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Item Row</span>
+            </button>
           </div>
         </div>
         {/* Live Challan Pre-Save Summary Banner */}
@@ -428,7 +417,7 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
               <span>Challan Aggregate Verification</span>
             </span>
             <span className="font-mono text-[11px] text-zinc-400">
-              {rows.length} item lot{rows.length > 1 ? "s" : ""} • {totalRolls} total rolls/pkgs
+              {rows.length} item lot{rows.length > 1 ? "s" : ""} • {totalRolls} total pack
             </span>
           </div>
 
