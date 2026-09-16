@@ -625,14 +625,16 @@ export async function updateFabricInwardAction(
 }
 // -----------------------------------------------------------------------------
 // 2. OUTSOURCE DYEING / PRINTING: DISPATCH TO VENDOR (OGP)
-// Supports both Multi-Item Lot Dispatches (Header + Rows) and Single-Item Fallbacks
+// Supports Multi-Unit Lots (M, Yd, Pcs) with Dual-Ledger Posting
 // -----------------------------------------------------------------------------
 const OutsourceItemSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
   inwardId: z.string().optional(),
+  inwardItemId: z.string().optional(),
+  unit: z.enum(["METERS", "YARDS", "PIECES"]).default("METERS"),
   processType: z.string().default("SOLID_DYEING"),
   targetShade: z.string().trim().min(1, "Target color / shade specification is required"),
-  sentMeters: z.coerce.number().positive("Sent meters must be positive"),
+  sentQty: z.coerce.number().positive("Sent quantity must be positive"),
 });
 
 const OutsourceDispatchSchema = z.object({
@@ -666,7 +668,11 @@ export async function createOutsourceDispatchAction(
         return { error: "Please add at least one lot / challan item to dispatch." };
       }
       for (let i = 0; i < parsedArray.length; i++) {
-        const itemResult = OutsourceItemSchema.safeParse(parsedArray[i]);
+        const rawItem = parsedArray[i];
+        if (rawItem.sentQty === undefined && rawItem.sentMeters !== undefined) {
+          rawItem.sentQty = rawItem.sentMeters;
+        }
+        const itemResult = OutsourceItemSchema.safeParse(rawItem);
         if (!itemResult.success) {
           return { error: `Item ${i + 1}: ${itemResult.error.issues[0].message}` };
         }
@@ -676,12 +682,15 @@ export async function createOutsourceDispatchAction(
       return { error: "Invalid lot items payload submitted." };
     }
   } else {
+    const rawSent = formData.get("sentQty") || formData.get("sentMeters");
     const singleRaw = {
       partyId: formData.get("partyId"),
       inwardId: formData.get("inwardId") || undefined,
+      inwardItemId: formData.get("inwardItemId") || undefined,
+      unit: (formData.get("unit") as string) || "METERS",
       processType: formData.get("processType") || "SOLID_DYEING",
       targetShade: formData.get("targetShade"),
-      sentMeters: formData.get("sentMeters"),
+      sentQty: rawSent,
     };
     const singleParsed = OutsourceItemSchema.safeParse(singleRaw);
     if (!singleParsed.success) {
@@ -701,22 +710,40 @@ export async function createOutsourceDispatchAction(
     const parties = await prisma.party.findMany({ where: { id: { in: partyIds } } });
     if (parties.length !== partyIds.length) return { error: "One or more selected parties not found." };
 
+    // Validate balances by category (Continuous vs Pieces)
     for (const pId of partyIds) {
       const party = parties.find((p) => p.id === pId)!;
-      const totalSentForParty = itemsToDispatch
-        .filter((i) => i.partyId === pId)
-        .reduce((sum, i) => sum + i.sentMeters, 0);
+      const continuousSent = itemsToDispatch
+        .filter((i) => i.partyId === pId && i.unit !== "PIECES")
+        .reduce((sum, i) => sum + (i.unit === "YARDS" ? yardsToMeters(i.sentQty) : i.sentQty), 0);
+      const piecesSent = itemsToDispatch
+        .filter((i) => i.partyId === pId && i.unit === "PIECES")
+        .reduce((sum, i) => sum + Math.round(i.sentQty), 0);
 
-      const lastEntry = await prisma.fabricLedgerEntry.findFirst({
-        where: { partyId: pId, itemCategory: "CONTINUOUS" },
-        orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-      });
-      const currentBalance = lastEntry ? Number(lastEntry.runningBalance) : 0;
+      if (continuousSent > 0) {
+        const lastContEntry = await prisma.fabricLedgerEntry.findFirst({
+          where: { partyId: pId, itemCategory: "CONTINUOUS" },
+          orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        });
+        const currentContBalance = lastContEntry ? Number(lastContEntry.runningBalance) : 0;
+        if (continuousSent > currentContBalance) {
+          return {
+            error: `Cannot dispatch ${continuousSent.toFixed(2)}m for ${party.name}. Current in-factory continuous custody balance is ${currentContBalance.toFixed(2)}m.`,
+          };
+        }
+      }
 
-      if (totalSentForParty > currentBalance) {
-        return {
-          error: `Cannot dispatch ${totalSentForParty.toFixed(2)}m for ${party.name}. Current in-factory custody balance is ${currentBalance.toFixed(2)}m.`,
-        };
+      if (piecesSent > 0) {
+        const lastPieceEntry = await prisma.fabricLedgerEntry.findFirst({
+          where: { partyId: pId, itemCategory: "PIECES" },
+          orderBy: [{ timestamp: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        });
+        const currentPieceBalance = lastPieceEntry ? Number(lastPieceEntry.runningPieces) : 0;
+        if (piecesSent > currentPieceBalance) {
+          return {
+            error: `Cannot dispatch ${piecesSent} pcs for ${party.name}. Current in-factory cut pieces custody balance is ${currentPieceBalance} pcs.`,
+          };
+        }
       }
     }
 
@@ -733,15 +760,25 @@ export async function createOutsourceDispatchAction(
           }
         }
 
+        const isPieces = item.unit === "PIECES";
+        const stdQty = isPieces
+          ? item.sentQty
+          : item.unit === "YARDS"
+          ? yardsToMeters(item.sentQty)
+          : item.sentQty;
+
         await tx.outsourceBatch.create({
           data: {
             ogpNumber,
             partyId: item.partyId,
             vendorId,
             inwardId: item.inwardId || null,
+            inwardItemId: item.inwardItemId || null,
+            unit: item.unit,
+            itemCategory: isPieces ? "PIECES" : "CONTINUOUS",
             processType: item.processType,
             targetShade: item.targetShade,
-            sentMeters: item.sentMeters,
+            sentMeters: stdQty,
             sentDate: dateDispatch,
             sentById: session.userId,
             status: "WITH_VENDOR",
@@ -749,24 +786,54 @@ export async function createOutsourceDispatchAction(
           },
         });
 
-        await tx.fabricLedgerEntry.create({
-          data: {
-            partyId: item.partyId,
-            partyChallanNo: inwardChallanNo,
-            inwardId: item.inwardId || null,
-            itemCategory: "CONTINUOUS",
-            movementType: "OUTWARD_TO_VENDOR",
-            referenceNumber: ogpNumber,
-            creditMeters: 0,
-            debitMeters: item.sentMeters,
-            shrinkageMeters: 0,
-            runningBalance: 0,
-            timestamp: dateDispatch,
-            notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade})${
-              inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
-            }`,
-          },
-        });
+        if (isPieces) {
+          const sentPieces = Math.round(item.sentQty);
+          await tx.fabricLedgerEntry.create({
+            data: {
+              partyId: item.partyId,
+              partyChallanNo: inwardChallanNo,
+              inwardId: item.inwardId || null,
+              inwardItemId: item.inwardItemId || null,
+              itemCategory: "PIECES",
+              unit: "PIECES",
+              movementType: "OUTWARD_TO_VENDOR",
+              referenceNumber: ogpNumber,
+              creditMeters: 0,
+              debitMeters: 0,
+              shrinkageMeters: 0,
+              creditPieces: 0,
+              debitPieces: sentPieces,
+              shortagePieces: 0,
+              runningPieces: 0,
+              timestamp: dateDispatch,
+              notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade}) - ${sentPieces} pcs${
+                inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
+              }`,
+            },
+          });
+        } else {
+          const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+          await tx.fabricLedgerEntry.create({
+            data: {
+              partyId: item.partyId,
+              partyChallanNo: inwardChallanNo,
+              inwardId: item.inwardId || null,
+              inwardItemId: item.inwardItemId || null,
+              itemCategory: "CONTINUOUS",
+              unit: item.unit,
+              movementType: "OUTWARD_TO_VENDOR",
+              referenceNumber: ogpNumber,
+              creditMeters: 0,
+              debitMeters: stdQty,
+              shrinkageMeters: 0,
+              runningBalance: 0,
+              timestamp: dateDispatch,
+              notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade}) - ${item.sentQty} ${unitSuffix}${
+                item.unit === "YARDS" ? ` (≈ ${stdQty.toFixed(2)}m)` : ""
+              }${inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""}`,
+            },
+          });
+        }
       }
 
       for (const pId of partyIds) {
@@ -778,10 +845,20 @@ export async function createOutsourceDispatchAction(
     revalidatePath("/outsource");
     revalidatePath("/ledger");
 
-    const totalMeters = itemsToDispatch.reduce((sum, i) => sum + i.sentMeters, 0);
+    const totalContinuous = itemsToDispatch
+      .filter((i) => i.unit !== "PIECES")
+      .reduce((sum, i) => sum + (i.unit === "YARDS" ? yardsToMeters(i.sentQty) : i.sentQty), 0);
+    const totalPieces = itemsToDispatch
+      .filter((i) => i.unit === "PIECES")
+      .reduce((sum, i) => sum + Math.round(i.sentQty), 0);
+
+    const summaryParts = [];
+    if (totalContinuous > 0) summaryParts.push(`${totalContinuous.toFixed(2)}m`);
+    if (totalPieces > 0) summaryParts.push(`${totalPieces} pcs`);
+
     return {
       success: true,
-      message: `Outward Gate Pass ${ogpNumber} issued for ${totalMeters.toFixed(2)}m (${itemsToDispatch.length} lot${
+      message: `Outward Gate Pass ${ogpNumber} issued for ${summaryParts.join(" + ")} (${itemsToDispatch.length} lot${
         itemsToDispatch.length > 1 ? "s" : ""
       }) to ${vendor.name}.`,
     };
@@ -791,14 +868,14 @@ export async function createOutsourceDispatchAction(
   }
 }
 // -----------------------------------------------------------------------------
-// 3. OUTSOURCE DYEING / PRINTING: RECEIVE RETURN (PARTIAL OR FULL WITH TECHNICAL SHRINKAGE)
+// 3. OUTSOURCE DYEING / PRINTING: RECEIVE RETURN (PARTIAL OR FULL WITH SHRINKAGE)
 // -----------------------------------------------------------------------------
 const OutsourceReturnSchema = z.object({
   batchId: z.string().min(1, "Batch ID is required"),
   receivedDate: z.string().optional(),
   vendorChallanNo: z.string().trim().min(1, "Dyer delivery slip # is required"),
-  accountedMeters: z.coerce.number().positive("Accounted dispatched meterage must be positive").optional(),
-  receivedMeters: z.coerce.number().positive("Physical received meters must be positive"),
+  accountedQty: z.coerce.number().positive("Accounted quantity must be positive").optional(),
+  receivedQty: z.coerce.number().positive("Physical received quantity must be positive"),
   remarks: z.string().optional(),
 });
 
@@ -808,12 +885,15 @@ export async function returnOutsourceBatchAction(
 ): Promise<FabricActionState> {
   const session = await requireAuth();
 
+  const rawAccounted = formData.get("accountedQty") || formData.get("accountedMeters") || undefined;
+  const rawReceived = formData.get("receivedQty") || formData.get("receivedMeters");
+
   const rawData = {
     batchId: formData.get("batchId"),
     receivedDate: formData.get("receivedDate") || undefined,
     vendorChallanNo: formData.get("vendorChallanNo"),
-    accountedMeters: formData.get("accountedMeters") ? formData.get("accountedMeters") : undefined,
-    receivedMeters: formData.get("receivedMeters"),
+    accountedQty: rawAccounted,
+    receivedQty: rawReceived,
     remarks: formData.get("remarks") || undefined,
   };
 
@@ -822,7 +902,7 @@ export async function returnOutsourceBatchAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { batchId, receivedDate, vendorChallanNo, receivedMeters, remarks } = parsed.data;
+  const { batchId, receivedDate, vendorChallanNo, receivedQty, remarks } = parsed.data;
   const dateReturn = parseLedgerDate(receivedDate, 3);
 
   try {
@@ -835,30 +915,34 @@ export async function returnOutsourceBatchAction(
       return { error: "Outsource batch record not found." };
     }
 
+    const isPieces = batch.itemCategory === "PIECES" || batch.unit === "PIECES";
+    const unitLabel = isPieces ? "pcs" : batch.unit === "YARDS" ? "yd" : "m";
+
     const totalSent = Number(batch.sentMeters);
     const prevAccounted = Number(batch.accountedMeters || 0);
     const pendingWithVendor = Number((totalSent - prevAccounted).toFixed(2));
 
-    const accountedMeters = parsed.data.accountedMeters ?? pendingWithVendor;
+    const accountedQty = parsed.data.accountedQty ?? pendingWithVendor;
 
-    if (accountedMeters > pendingWithVendor + 0.05) {
+    if (accountedQty > pendingWithVendor + 0.05) {
       return {
-        error: `Cannot account for ${accountedMeters.toFixed(2)}m. Only ${pendingWithVendor.toFixed(2)}m is currently pending with vendor.`,
+        error: `Cannot account for ${accountedQty} ${unitLabel}. Only ${pendingWithVendor} ${unitLabel} is currently pending with vendor.`,
       };
     }
 
-    const shrinkageMeters = Number((accountedMeters - receivedMeters).toFixed(2));
+    const shrinkageQty = Number((accountedQty - receivedQty).toFixed(2));
     const shrinkagePercent =
-      accountedMeters > 0 ? Number(((shrinkageMeters / accountedMeters) * 100).toFixed(2)) : 0;
+      accountedQty > 0 ? Number(((shrinkageQty / accountedQty) * 100).toFixed(2)) : 0;
 
     await prisma.$transaction(async (tx: any) => {
       await tx.outsourceBatchReturn.create({
         data: {
           batchId,
           vendorChallanNo,
-          accountedMeters,
-          receivedMeters,
-          shrinkageMeters,
+          unit: batch.unit || "METERS",
+          accountedMeters: accountedQty,
+          receivedMeters: receivedQty,
+          shrinkageMeters: shrinkageQty,
           shrinkagePercent,
           returnDate: dateReturn,
           receivedById: session.userId,
@@ -866,9 +950,9 @@ export async function returnOutsourceBatchAction(
         },
       });
 
-      const newAccounted = Number((prevAccounted + accountedMeters).toFixed(2));
-      const newReceived = Number(((Number(batch.receivedMeters) || 0) + receivedMeters).toFixed(2));
-      const newShrinkage = Number(((Number(batch.shrinkageMeters) || 0) + shrinkageMeters).toFixed(2));
+      const newAccounted = Number((prevAccounted + accountedQty).toFixed(2));
+      const newReceived = Number(((Number(batch.receivedMeters) || 0) + receivedQty).toFixed(2));
+      const newShrinkage = Number(((Number(batch.shrinkageMeters) || 0) + shrinkageQty).toFixed(2));
       const isComplete = newAccounted >= totalSent - 0.05;
       const newStatus = isComplete ? "RECEIVED_COMPLETE" : "RECEIVED_PARTIAL";
 
@@ -896,24 +980,59 @@ export async function returnOutsourceBatchAction(
       });
 
       const inwardRef = batch.inward?.partyChallanNo;
-      await tx.fabricLedgerEntry.create({
-        data: {
-          partyId: batch.partyId,
-          partyChallanNo: inwardRef || null,
-          inwardId: batch.inwardId || null,
-          itemCategory: "CONTINUOUS",
-          movementType: "INWARD_FROM_VENDOR",
-          referenceNumber: batch.ogpNumber,
-          creditMeters: accountedMeters,
-          debitMeters: 0,
-          shrinkageMeters: shrinkageMeters > 0 ? shrinkageMeters : 0,
-          runningBalance: 0,
-          timestamp: dateReturn,
-          notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
-            inwardRef ? ` [Ref: #${inwardRef}]` : ""
-          } (${batch.processType}, ${batch.targetShade}). Received: ${receivedMeters.toFixed(2)}m | Technical Shrinkage: ${shrinkageMeters.toFixed(2)}m (${shrinkagePercent.toFixed(2)}%) [Accounted: ${accountedMeters.toFixed(2)}m]`,
-        },
-      });
+      if (isPieces) {
+        const accountedPcs = Math.round(accountedQty);
+        const receivedPcs = Math.round(receivedQty);
+        const lossPcs = Math.max(0, Math.round(shrinkageQty));
+
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId: batch.partyId,
+            partyChallanNo: inwardRef || null,
+            inwardId: batch.inwardId || null,
+            inwardItemId: batch.inwardItemId || null,
+            itemCategory: "PIECES",
+            unit: "PIECES",
+            movementType: "INWARD_FROM_VENDOR",
+            referenceNumber: batch.ogpNumber,
+            creditMeters: 0,
+            debitMeters: 0,
+            shrinkageMeters: 0,
+            creditPieces: accountedPcs,
+            debitPieces: 0,
+            shortagePieces: lossPcs,
+            runningPieces: 0,
+            timestamp: dateReturn,
+            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
+              inwardRef ? ` [Ref: #${inwardRef}]` : ""
+            } (${batch.processType}, ${batch.targetShade}). Received: ${receivedPcs} pcs | Vendor Loss: ${lossPcs} pcs [Accounted: ${accountedPcs} pcs]`,
+          },
+        });
+      } else {
+        const stdAccounted = batch.unit === "YARDS" ? yardsToMeters(accountedQty) : accountedQty;
+        const stdShrinkage = batch.unit === "YARDS" ? yardsToMeters(shrinkageQty) : shrinkageQty;
+
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId: batch.partyId,
+            partyChallanNo: inwardRef || null,
+            inwardId: batch.inwardId || null,
+            inwardItemId: batch.inwardItemId || null,
+            itemCategory: "CONTINUOUS",
+            unit: batch.unit || "METERS",
+            movementType: "INWARD_FROM_VENDOR",
+            referenceNumber: batch.ogpNumber,
+            creditMeters: stdAccounted,
+            debitMeters: 0,
+            shrinkageMeters: stdShrinkage > 0 ? stdShrinkage : 0,
+            runningBalance: 0,
+            timestamp: dateReturn,
+            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
+              inwardRef ? ` [Ref: #${inwardRef}]` : ""
+            } (${batch.processType}, ${batch.targetShade}). Received: ${receivedQty.toFixed(2)}${unitLabel} | Technical Shrinkage: ${shrinkageQty.toFixed(2)}${unitLabel} (${shrinkagePercent.toFixed(2)}%) [Accounted: ${accountedQty.toFixed(2)}${unitLabel}]`,
+          },
+        });
+      }
 
       await reconcilePartyLedger(tx, batch.partyId);
     }, { maxWait: 15000, timeout: 45000 });
@@ -922,12 +1041,12 @@ export async function returnOutsourceBatchAction(
     revalidatePath("/outsource");
     revalidatePath("/ledger");
 
-    const remaining = Number((totalSent - (prevAccounted + accountedMeters)).toFixed(2));
-    const remainingText = remaining > 0 ? ` (Remaining with vendor: ${remaining.toFixed(2)}m)` : " (Batch completed)";
+    const remaining = Number((totalSent - (prevAccounted + accountedQty)).toFixed(2));
+    const remainingText = remaining > 0 ? ` (Remaining with vendor: ${remaining} ${unitLabel})` : " (Batch completed)";
 
     return {
       success: true,
-      message: `Return recorded on Dyer Slip #${vendorChallanNo}: +${receivedMeters.toFixed(2)}m received, -${shrinkageMeters.toFixed(2)}m shrinkage${remainingText}.`,
+      message: `Return recorded on Dyer Slip #${vendorChallanNo}: +${receivedQty} ${unitLabel} received, -${shrinkageQty} ${unitLabel} shrinkage${remainingText}.`,
     };
   } catch (err: any) {
     console.error("Outsource return error:", err);

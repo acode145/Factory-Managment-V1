@@ -60,6 +60,7 @@ export default async function DashboardPage({
         vendor: { select: { name: true, code: true } },
         sentBy: { select: { fullName: true } },
         inward: { select: { partyChallanNo: true, igpNumber: true, fabricType: true, colorShade: true } },
+        inwardItem: { select: { fabricType: true, colorShade: true, unit: true } },
         returns: {
           orderBy: { returnDate: "desc" },
           include: { receivedBy: { select: { fullName: true } } },
@@ -82,6 +83,9 @@ export default async function DashboardPage({
     partyId: b.partyId,
     vendorId: b.vendorId,
     inwardId: b.inwardId,
+    inwardItemId: b.inwardItemId,
+    unit: b.unit || "METERS",
+    itemCategory: b.itemCategory || "CONTINUOUS",
     processType: b.processType,
     targetShade: b.targetShade,
     sentMeters: Number(b.sentMeters),
@@ -98,6 +102,7 @@ export default async function DashboardPage({
     vendor: b.vendor,
     sentBy: b.sentBy,
     inward: b.inward,
+    inwardItem: b.inwardItem,
     returns: (b.returns || []).map((r: any) => ({
       id: r.id,
       vendorChallanNo: r.vendorChallanNo,

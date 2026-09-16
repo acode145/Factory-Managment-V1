@@ -99,6 +99,7 @@ model FabricInwardItem {
   createdAt        DateTime          @default(now())
 
   ledgerEntries    FabricLedgerEntry[]
+  outsourceBatches OutsourceBatch[]
 }
 
 model OutsourceBatch {
@@ -110,6 +111,10 @@ model OutsourceBatch {
   vendor           Vendor            @relation(fields: [vendorId], references: [id])
   inwardId         String?
   inward           FabricInward?     @relation(fields: [inwardId], references: [id])
+  inwardItemId     String?
+  inwardItem       FabricInwardItem? @relation(fields: [inwardItemId], references: [id])
+  unit             String            @default("METERS") // METERS, YARDS, PIECES
+  itemCategory     String            @default("CONTINUOUS") // CONTINUOUS, PIECES
   processType      String            @default("SOLID_DYEING")
   targetShade      String
   sentMeters       Decimal           @db.Decimal(10, 2)
@@ -141,6 +146,7 @@ model OutsourceBatchReturn {
   batchId          String
   batch            OutsourceBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
   vendorChallanNo  String
+  unit             String            @default("METERS")
   accountedMeters  Decimal           @db.Decimal(10, 2) // Portion of sent meters cleared
   receivedMeters   Decimal           @db.Decimal(10, 2) // Physical meters received
   shrinkageMeters  Decimal           @db.Decimal(10, 2)

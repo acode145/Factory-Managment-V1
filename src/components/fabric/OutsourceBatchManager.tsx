@@ -1,13 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useEffect } from "react";
 import {
   createOutsourceDispatchAction,
   returnOutsourceBatchAction,
   FabricActionState,
 } from "@/actions/fabric";
 import DatePicker from "@/components/ui/DatePicker";
-import { metersToYards } from "@/lib/units";
+import { metersToYards, yardsToMeters } from "@/lib/units";
 import {
   Send,
   RotateCcw,
@@ -18,6 +18,7 @@ import {
   Trash2,
   Layers,
   FileText,
+  Boxes,
 } from "lucide-react";
 
 interface PartyOption {
@@ -25,6 +26,7 @@ interface PartyOption {
   name: string;
   code: string;
   balance?: number;
+  piecesBalance?: number;
 }
 
 interface VendorOption {
@@ -44,11 +46,24 @@ interface InwardOption {
   measuredMeters: number;
   availableMeters: number;
   party?: { name: string; code: string };
+  items?: Array<{
+    id: string;
+    itemIndex: number;
+    fabricType: string;
+    colorShade: string;
+    unit: string;
+    rollCount: number;
+    challanQty: number;
+    measuredQty: number;
+    shortageQty: number;
+    standardMeters: number | null;
+  }>;
 }
 
 interface BatchReturnItem {
   id: string;
   vendorChallanNo: string;
+  unit?: string;
   accountedMeters: number;
   receivedMeters: number;
   shrinkageMeters: number;
@@ -64,6 +79,9 @@ interface OutsourceBatchItem {
   partyId: string;
   vendorId: string;
   inwardId?: string | null;
+  inwardItemId?: string | null;
+  unit?: string;
+  itemCategory?: string;
   processType: string;
   targetShade: string;
   sentMeters: any;
@@ -85,6 +103,11 @@ interface OutsourceBatchItem {
     fabricType: string;
     colorShade: string;
   } | null;
+  inwardItem?: {
+    fabricType: string;
+    colorShade: string;
+    unit: string;
+  } | null;
   returns?: BatchReturnItem[];
 }
 
@@ -92,9 +115,11 @@ interface LotRow {
   tempId: string;
   partyId: string;
   inwardId: string;
+  inwardItemId: string;
   processType: string;
   targetShade: string;
-  sentMeters: string;
+  unit: "METERS" | "YARDS" | "PIECES";
+  sentQty: string;
 }
 
 export default function OutsourceBatchManager({
@@ -128,11 +153,47 @@ export default function OutsourceBatchManager({
       tempId: "lot-1",
       partyId: parties[0]?.id || "",
       inwardId: "",
+      inwardItemId: "",
       processType: "SOLID_DYEING",
       targetShade: "",
-      sentMeters: "",
+      unit: "METERS",
+      sentQty: "",
     },
   ]);
+
+  // Auto-reset form on successful OGP dispatch
+  useEffect(() => {
+    if (dispatchState?.success) {
+      setLotRows([
+        {
+          tempId: `lot-${Date.now()}`,
+          partyId: parties[0]?.id || "",
+          inwardId: "",
+          inwardItemId: "",
+          processType: "SOLID_DYEING",
+          targetShade: "",
+          unit: "METERS",
+          sentQty: "",
+        },
+      ]);
+      setVendorId("");
+      setRemarks("");
+    }
+  }, [dispatchState]);
+
+  // Return Modal State
+  const [activeReturnBatch, setActiveReturnBatch] = useState<OutsourceBatchItem | null>(null);
+  const [accountedQtyInput, setAccountedQtyInput] = useState("");
+  const [receivedQtyInput, setReceivedQtyInput] = useState("");
+
+  // Auto-reset return modal on successful return submission
+  useEffect(() => {
+    if (returnState?.success) {
+      setActiveReturnBatch(null);
+      setAccountedQtyInput("");
+      setReceivedQtyInput("");
+    }
+  }, [returnState]);
 
   const addLotRow = () => {
     setLotRows((prev) => [
@@ -141,9 +202,11 @@ export default function OutsourceBatchManager({
         tempId: `lot-${Date.now()}`,
         partyId: prev[prev.length - 1]?.partyId || parties[0]?.id || "",
         inwardId: "",
+        inwardItemId: "",
         processType: "SOLID_DYEING",
         targetShade: "",
-        sentMeters: "",
+        unit: prev[prev.length - 1]?.unit || "METERS",
+        sentQty: "",
       },
     ]);
   };
@@ -160,12 +223,36 @@ export default function OutsourceBatchManager({
 
       if (field === "partyId") {
         updated[index].inwardId = "";
+        updated[index].inwardItemId = "";
       }
 
-      if (field === "inwardId" && value) {
-        const matchingInward = inwards.find((i) => i.id === value);
-        if (matchingInward && !updated[index].targetShade) {
-          updated[index].targetShade = matchingInward.colorShade;
+      if (field === "inwardId") {
+        updated[index].inwardItemId = "";
+        if (value) {
+          const matchingInward = inwards.find((i) => i.id === value);
+          if (matchingInward) {
+            if (matchingInward.items && matchingInward.items.length === 1) {
+              const it = matchingInward.items[0];
+              updated[index].inwardItemId = it.id;
+              updated[index].unit = (it.unit as any) || "METERS";
+              if (!updated[index].targetShade) {
+                updated[index].targetShade = it.colorShade;
+              }
+            } else if (!updated[index].targetShade) {
+              updated[index].targetShade = matchingInward.colorShade;
+            }
+          }
+        }
+      }
+
+      if (field === "inwardItemId" && value) {
+        const matchingInward = inwards.find((i) => i.id === updated[index].inwardId);
+        const matchingItem = matchingInward?.items?.find((it) => it.id === value);
+        if (matchingItem) {
+          updated[index].unit = (matchingItem.unit as any) || "METERS";
+          if (!updated[index].targetShade) {
+            updated[index].targetShade = matchingItem.colorShade;
+          }
         }
       }
 
@@ -173,52 +260,73 @@ export default function OutsourceBatchManager({
     });
   };
 
-  const totalMetersToDispatch = lotRows.reduce((sum, r) => sum + (parseFloat(r.sentMeters) || 0), 0);
+  // Aggregated totals
+  const totalContinuousMeters = lotRows
+    .filter((r) => r.unit !== "PIECES")
+    .reduce((sum, r) => {
+      const q = parseFloat(r.sentQty) || 0;
+      return sum + (r.unit === "YARDS" ? yardsToMeters(q) : q);
+    }, 0);
+  const totalContinuousYards = Number((totalContinuousMeters / 0.9144).toFixed(2));
+  const totalPieces = lotRows
+    .filter((r) => r.unit === "PIECES")
+    .reduce((sum, r) => sum + (parseInt(r.sentQty, 10) || 0), 0);
 
+  // Custody balance validation
   let hasOverbalanceError = false;
-  const partyUsageMap: Record<string, number> = {};
+  const partyUsageContinuousMap: Record<string, number> = {};
+  const partyUsagePiecesMap: Record<string, number> = {};
 
   for (const row of lotRows) {
-    const meters = parseFloat(row.sentMeters) || 0;
-    if (row.partyId) {
-      partyUsageMap[row.partyId] = (partyUsageMap[row.partyId] || 0) + meters;
-      const party = parties.find((p) => p.id === row.partyId);
-      if (party && partyUsageMap[row.partyId] > (party.balance || 0)) {
-        hasOverbalanceError = true;
-      }
-    }
-    if (row.inwardId) {
-      const inward = inwards.find((i) => i.id === row.inwardId);
-      if (inward && meters > inward.availableMeters) {
-        hasOverbalanceError = true;
+    const qty = parseFloat(row.sentQty) || 0;
+    if (row.partyId && qty > 0) {
+      if (row.unit === "PIECES") {
+        partyUsagePiecesMap[row.partyId] =
+          (partyUsagePiecesMap[row.partyId] || 0) + Math.round(qty);
+        const party = parties.find((p) => p.id === row.partyId);
+        if (party && partyUsagePiecesMap[row.partyId] > (party.piecesBalance || 0)) {
+          hasOverbalanceError = true;
+        }
+      } else {
+        const stdM = row.unit === "YARDS" ? yardsToMeters(qty) : qty;
+        partyUsageContinuousMap[row.partyId] =
+          (partyUsageContinuousMap[row.partyId] || 0) + stdM;
+        const party = parties.find((p) => p.id === row.partyId);
+        if (party && partyUsageContinuousMap[row.partyId] > (party.balance || 0)) {
+          hasOverbalanceError = true;
+        }
       }
     }
   }
 
-  // Return Modal State
-  const [activeReturnBatch, setActiveReturnBatch] = useState<OutsourceBatchItem | null>(null);
-  const [accountedMetersInput, setAccountedMetersInput] = useState("");
-  const [receivedMetersInput, setReceivedMetersInput] = useState("");
+  // Active Return Batch Calculations
+  const isReturnPieces =
+    activeReturnBatch?.itemCategory === "PIECES" || activeReturnBatch?.unit === "PIECES";
+  const returnUnitLabel = isReturnPieces
+    ? "pcs"
+    : activeReturnBatch?.unit === "YARDS"
+    ? "yd"
+    : "m";
 
-  const sentMetersNum = activeReturnBatch ? Number(activeReturnBatch.sentMeters) : 0;
+  const sentQtyNum = activeReturnBatch ? Number(activeReturnBatch.sentMeters) : 0;
   const prevAccountedNum = activeReturnBatch ? Number(activeReturnBatch.accountedMeters || 0) : 0;
-  const pendingMetersNum = Number((sentMetersNum - prevAccountedNum).toFixed(2));
+  const pendingQtyNum = Number((sentQtyNum - prevAccountedNum).toFixed(2));
 
-  const accountedMetersNum = parseFloat(accountedMetersInput) || pendingMetersNum;
-  const receivedMetersNum = parseFloat(receivedMetersInput) || 0;
+  const accountedQtyNum = parseFloat(accountedQtyInput) || pendingQtyNum;
+  const receivedQtyNum = parseFloat(receivedQtyInput) || 0;
 
   const calculatedShrinkage =
-    accountedMetersNum > 0 && receivedMetersNum > 0
-      ? Number((accountedMetersNum - receivedMetersNum).toFixed(2))
+    accountedQtyNum > 0 && receivedQtyNum > 0
+      ? Number((accountedQtyNum - receivedQtyNum).toFixed(2))
       : 0;
 
   const calculatedPercent =
-    accountedMetersNum > 0 && receivedMetersNum > 0
-      ? Number(((calculatedShrinkage / accountedMetersNum) * 100).toFixed(2))
+    accountedQtyNum > 0 && receivedQtyNum > 0
+      ? Number(((calculatedShrinkage / accountedQtyNum) * 100).toFixed(2))
       : 0;
 
-  const remainingAfterThisDelivery = Number((pendingMetersNum - accountedMetersNum).toFixed(2));
-  const isOverPendingError = accountedMetersNum > pendingMetersNum + 0.05;
+  const remainingAfterThisDelivery = Number((pendingQtyNum - accountedQtyNum).toFixed(2));
+  const isOverPendingError = accountedQtyNum > pendingQtyNum + 0.05;
 
   const pendingBatches = batches.filter(
     (b) => b.status === "WITH_VENDOR" || b.status === "RECEIVED_PARTIAL"
@@ -228,14 +336,14 @@ export default function OutsourceBatchManager({
   return (
     <div className="space-y-6">
       {(dispatchState?.message || returnState?.message) && (
-        <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
+        <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 shadow-xs">
           <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
           <span className="font-semibold">{dispatchState?.message || returnState?.message}</span>
         </div>
       )}
 
       {(dispatchState?.error || returnState?.error) && (
-        <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2">
+        <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2 shadow-xs">
           <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
           <span className="font-semibold">{dispatchState?.error || returnState?.error}</span>
         </div>
@@ -251,15 +359,27 @@ export default function OutsourceBatchManager({
             <div>
               <h2 className="text-base font-bold text-zinc-950">Dispatch to Dyer / Printer (OGP)</h2>
               <p className="text-xs text-zinc-500">
-                Generate single Outward Gate Pass with one or multiple lot / challan items
+                Generate single Outward Gate Pass with multi-unit lots (m, yd, pcs)
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono px-3 py-1 rounded bg-zinc-100 border border-zinc-200 text-zinc-700 font-semibold">
-              Total Dispatched: {totalMetersToDispatch.toFixed(2)}m (≈ {metersToYards(totalMetersToDispatch).toFixed(1)} yds)
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {totalContinuousMeters > 0 && (
+              <span className="text-xs font-mono px-3 py-1 rounded bg-zinc-100 border border-zinc-200 text-zinc-800 font-semibold">
+                Continuous: {totalContinuousMeters.toFixed(2)}m (≈ {totalContinuousYards.toFixed(1)} yd)
+              </span>
+            )}
+            {totalPieces > 0 && (
+              <span className="text-xs font-mono px-3 py-1 rounded bg-purple-50 border border-purple-200 text-purple-900 font-semibold">
+                Pieces: {totalPieces.toLocaleString()} pcs
+              </span>
+            )}
+            {totalContinuousMeters === 0 && totalPieces === 0 && (
+              <span className="text-xs font-mono px-3 py-1 rounded bg-zinc-50 border border-zinc-200 text-zinc-400">
+                No quantity entered
+              </span>
+            )}
           </div>
         </div>
 
@@ -271,9 +391,11 @@ export default function OutsourceBatchManager({
               lotRows.map((r) => ({
                 partyId: r.partyId,
                 inwardId: r.inwardId || undefined,
+                inwardItemId: r.inwardItemId || undefined,
+                unit: r.unit,
                 processType: r.processType,
                 targetShade: r.targetShade,
-                sentMeters: parseFloat(r.sentMeters) || 0,
+                sentQty: parseFloat(r.sentQty) || 0,
               }))
             )}
           />
@@ -288,7 +410,7 @@ export default function OutsourceBatchManager({
 
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                Outsource Vendor (Dyer / Printer)
+                Outsource Vendor (Dyer / Printer) *
               </label>
               <select
                 name="vendorId"
@@ -320,6 +442,7 @@ export default function OutsourceBatchManager({
               />
             </div>
           </div>
+
           {/* Dynamic Lot Items Builder */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -327,14 +450,6 @@ export default function OutsourceBatchManager({
                 <Layers className="w-3.5 h-3.5 text-zinc-500" />
                 <span>Lots / Party Challans in this Dispatch ({lotRows.length})</span>
               </span>
-              <button
-                type="button"
-                onClick={addLotRow}
-                className="h-8 px-3 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium rounded-md flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Lot / Challan</span>
-              </button>
             </div>
 
             <div className="space-y-3">
@@ -342,12 +457,12 @@ export default function OutsourceBatchManager({
                 const party = parties.find((p) => p.id === row.partyId);
                 const partyInwards = inwards.filter((i) => i.partyId === row.partyId);
                 const selectedInward = inwards.find((i) => i.id === row.inwardId);
-                const parsedMeters = parseFloat(row.sentMeters) || 0;
+                const parsedQty = parseFloat(row.sentQty) || 0;
 
-                const isOverInward =
-                  Boolean(selectedInward && parsedMeters > selectedInward.availableMeters);
-                const isOverParty =
-                  Boolean(party && (partyUsageMap[row.partyId] || 0) > (party.balance || 0));
+                const isPiecesRow = row.unit === "PIECES";
+                const isOverParty = isPiecesRow
+                  ? Boolean(party && (partyUsagePiecesMap[row.partyId] || 0) > (party.piecesBalance || 0))
+                  : Boolean(party && (partyUsageContinuousMap[row.partyId] || 0) > (party.balance || 0));
 
                 return (
                   <div
@@ -355,9 +470,20 @@ export default function OutsourceBatchManager({
                     className="p-4 rounded-lg border border-zinc-200 bg-white hover:border-zinc-300 transition-colors shadow-xs space-y-3"
                   >
                     <div className="flex items-center justify-between pb-2 border-b border-zinc-100">
-                      <span className="text-xs font-mono font-bold text-zinc-700">
-                        Item #{index + 1}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold text-zinc-700">
+                          Lot Item #{index + 1}
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold border ${
+                            isPiecesRow
+                              ? "bg-purple-50 text-purple-900 border-purple-200"
+                              : "bg-blue-50 text-blue-900 border-blue-200"
+                          }`}
+                        >
+                          {isPiecesRow ? "Cut Pieces (Pcs)" : "Continuous Fabric"}
+                        </span>
+                      </div>
                       {lotRows.length > 1 && (
                         <button
                           type="button"
@@ -370,7 +496,8 @@ export default function OutsourceBatchManager({
                       )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                      {/* Client Party */}
                       <div>
                         <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
                           Client Party *
@@ -390,34 +517,45 @@ export default function OutsourceBatchManager({
                         </select>
                         {party && (
                           <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                            Custody: {party.balance?.toFixed(2)}m
+                            Custody: {party.balance?.toFixed(1)}m | {party.piecesBalance || 0} pcs
                           </span>
                         )}
                       </div>
 
+                      {/* Party Inward Challan & Item */}
                       <div>
                         <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                          Party Inward Challan # *
+                          Inward Challan / Lot #
                         </label>
                         <select
                           value={row.inwardId}
                           onChange={(e) => updateLotRow(index, "inwardId", e.target.value)}
                           className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 font-mono"
                         >
-                          <option value="">-- General Stock / Select Challan --</option>
+                          <option value="">-- General Stock / Challan --</option>
                           {partyInwards.map((i) => (
                             <option key={i.id} value={i.id}>
-                              #{i.partyChallanNo} ({i.colorShade}) — Avail: {i.availableMeters.toFixed(2)}m
+                              #{i.partyChallanNo} ({i.fabricType})
                             </option>
                           ))}
                         </select>
-                        {selectedInward && (
-                          <span className="text-[10px] text-emerald-700 font-mono block mt-1 font-medium">
-                            Avail in #{selectedInward.partyChallanNo}: {selectedInward.availableMeters.toFixed(2)}m
-                          </span>
+                        {selectedInward && selectedInward.items && selectedInward.items.length > 1 && (
+                          <select
+                            value={row.inwardItemId}
+                            onChange={(e) => updateLotRow(index, "inwardItemId", e.target.value)}
+                            className="w-full h-8 px-2 bg-zinc-50 border border-zinc-200 rounded text-[11px] text-zinc-800 font-mono mt-1.5 focus:outline-hidden"
+                          >
+                            <option value="">-- Select Specific Line Item --</option>
+                            {selectedInward.items.map((it) => (
+                              <option key={it.id} value={it.id}>
+                                #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — {it.measuredQty} {it.unit === "PIECES" ? "pcs" : it.unit === "YARDS" ? "yd" : "m"}
+                              </option>
+                            ))}
+                          </select>
                         )}
                       </div>
 
+                      {/* Process Type */}
                       <div>
                         <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
                           Process Type
@@ -434,6 +572,7 @@ export default function OutsourceBatchManager({
                         </select>
                       </div>
 
+                      {/* Target Color / Shade */}
                       <div>
                         <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
                           Target Color / Shade *
@@ -448,27 +587,46 @@ export default function OutsourceBatchManager({
                         />
                       </div>
 
+                      {/* Unit Selector (M, Yd, Pcs) */}
+                      <div>
+                        <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
+                          Unit *
+                        </label>
+                        <select
+                          value={row.unit}
+                          onChange={(e) => updateLotRow(index, "unit", e.target.value)}
+                          className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 cursor-pointer"
+                        >
+                          <option value="METERS">M</option>
+                          <option value="YARDS">Yd</option>
+                          <option value="PIECES">Pcs</option>
+                        </select>
+                      </div>
+
+                      {/* Sent Qty Input with live companion preview */}
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="block text-[11px] font-semibold text-zinc-600 uppercase">
-                            Sent Meters *
+                            Sent Qty *
                           </label>
-                          {parsedMeters > 0 && (
-                            <span className="text-[10px] font-mono text-zinc-500">
-                              ≈ {metersToYards(parsedMeters).toFixed(1)} yds
+                          {parsedQty > 0 && (
+                            <span className="text-[10px] font-mono text-zinc-500 font-medium">
+                              {row.unit === "YARDS" && `≈ ${yardsToMeters(parsedQty).toFixed(1)} m`}
+                              {row.unit === "METERS" && `≈ ${metersToYards(parsedQty).toFixed(1)} yd`}
+                              {row.unit === "PIECES" && `${Math.round(parsedQty)} pcs`}
                             </span>
                           )}
                         </div>
                         <input
                           type="number"
-                          step="0.01"
+                          step={row.unit === "PIECES" ? "1" : "0.01"}
                           required
-                          min="0.01"
-                          value={row.sentMeters}
-                          onChange={(e) => updateLotRow(index, "sentMeters", e.target.value)}
-                          placeholder="e.g. 5000.00"
+                          min={row.unit === "PIECES" ? "1" : "0.01"}
+                          value={row.sentQty}
+                          onChange={(e) => updateLotRow(index, "sentQty", e.target.value)}
+                          placeholder={row.unit === "PIECES" ? "e.g. 500" : "e.g. 1000.00"}
                           className={`w-full h-10 px-2.5 bg-white border rounded-md text-xs font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
-                            isOverInward || isOverParty
+                            isOverParty
                               ? "border-rose-400 bg-rose-50/30 focus:ring-rose-500"
                               : "border-zinc-300 focus:ring-zinc-900"
                           }`}
@@ -476,13 +634,13 @@ export default function OutsourceBatchManager({
                       </div>
                     </div>
 
-                    {(isOverInward || isOverParty) && (
+                    {isOverParty && (
                       <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 p-2 rounded flex items-center gap-1.5 font-medium">
                         <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                         <span>
-                          {isOverInward
-                            ? `Cannot dispatch ${parsedMeters.toFixed(2)}m. Originating Challan #${selectedInward?.partyChallanNo} only has ${selectedInward?.availableMeters.toFixed(2)}m remaining in factory.`
-                            : `Exceeds Party ${party?.name}'s total factory custody balance (${party?.balance?.toFixed(2)}m).`}
+                          {isPiecesRow
+                            ? `Exceeds Party ${party?.name}'s available cut pieces custody (${party?.piecesBalance || 0} pcs).`
+                            : `Exceeds Party ${party?.name}'s available continuous fabric custody (${party?.balance?.toFixed(2)}m).`}
                         </span>
                       </div>
                     )}
@@ -490,21 +648,37 @@ export default function OutsourceBatchManager({
                 );
               })}
             </div>
-          </div>
 
-          <div className="pt-2 flex items-center justify-between border-t border-zinc-100">
+            {/* FULL-WIDTH ADD LOT BUTTON BELOW LAST ROW */}
             <button
               type="button"
               onClick={addLotRow}
-              className="h-10 px-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-medium rounded-md flex items-center gap-1.5 cursor-pointer border border-zinc-200"
+              className="w-full h-11 border-2 border-dashed border-zinc-300 hover:border-zinc-400 hover:bg-zinc-50/80 rounded-lg text-xs font-semibold text-zinc-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Another Lot / Challan</span>
+              <Plus className="w-4 h-4 text-zinc-500" />
+              <span>+ Add Item Row</span>
             </button>
+          </div>
+
+          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-zinc-100">
+            <div className="text-xs text-zinc-500 font-mono">
+              Total to Dispatch:{" "}
+              <strong className="text-zinc-900">
+                {totalContinuousMeters > 0 && `${totalContinuousMeters.toFixed(2)}m (≈ ${totalContinuousYards.toFixed(1)} yd)`}
+                {totalContinuousMeters > 0 && totalPieces > 0 && " + "}
+                {totalPieces > 0 && `${totalPieces.toLocaleString()} pcs`}
+                {totalContinuousMeters === 0 && totalPieces === 0 && "0"}
+              </strong>
+            </div>
 
             <button
               type="submit"
-              disabled={isDispatching || hasOverbalanceError || !vendorId || totalMetersToDispatch <= 0}
+              disabled={
+                isDispatching ||
+                hasOverbalanceError ||
+                !vendorId ||
+                (totalContinuousMeters <= 0 && totalPieces <= 0)
+              }
               className="h-11 px-6 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-md text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isDispatching ? (
@@ -512,13 +686,16 @@ export default function OutsourceBatchManager({
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  <span>Issue Outward Gate Pass ({lotRows.length} Lot{lotRows.length > 1 ? "s" : ""})</span>
+                  <span>
+                    Issue Outward Gate Pass ({lotRows.length} Lot{lotRows.length > 1 ? "s" : ""})
+                  </span>
                 </>
               )}
             </button>
           </div>
         </form>
       </div>
+
       {/* ACTIVE & COMPLETED BATCHES TRACKER */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ACTIVE AT VENDORS (PENDING DYER RETURN) */}
@@ -540,6 +717,14 @@ export default function OutsourceBatchManager({
           ) : (
             <div className="space-y-3">
               {pendingBatches.map((batch) => {
+                const isBatchPieces =
+                  batch.itemCategory === "PIECES" || batch.unit === "PIECES";
+                const unitText = isBatchPieces
+                  ? "pcs"
+                  : batch.unit === "YARDS"
+                  ? "yd"
+                  : "m";
+
                 const totalSent = Number(batch.sentMeters);
                 const accounted = Number(batch.accountedMeters || 0);
                 const pending = Number((totalSent - accounted).toFixed(2));
@@ -565,6 +750,15 @@ export default function OutsourceBatchManager({
                           >
                             {isPartial ? "PARTIAL RETURN" : "AT VENDOR"}
                           </span>
+                          <span
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold border ${
+                              isBatchPieces
+                                ? "bg-purple-100 text-purple-900 border-purple-200"
+                                : "bg-zinc-100 text-zinc-800 border-zinc-200"
+                            }`}
+                          >
+                            {isBatchPieces ? "Pieces" : "Continuous"}
+                          </span>
                           {batch.inward?.partyChallanNo && (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-200 font-medium">
                               Ref: #{batch.inward.partyChallanNo}
@@ -585,16 +779,25 @@ export default function OutsourceBatchManager({
                         <span className="text-[10px] text-zinc-400 block uppercase">
                           {isPartial ? "Pending Remaining" : "Total Sent"}
                         </span>
-                        <span className="text-sm font-bold text-zinc-950">{pending.toFixed(2)}m</span>
-                        <span className="text-[10px] text-zinc-500 block">
-                          ≈ {metersToYards(pending).toFixed(1)} yds
+                        <span className="text-sm font-bold text-zinc-950">
+                          {isBatchPieces
+                            ? `${Math.round(pending).toLocaleString()} pcs`
+                            : `${pending.toFixed(2)}m`}
                         </span>
+                        {!isBatchPieces && (
+                          <span className="text-[10px] text-zinc-500 block">
+                            ≈ {metersToYards(pending).toFixed(1)} yd
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     {isPartial && (
                       <div className="p-2 bg-white/80 rounded border border-amber-200/70 text-[11px] font-mono flex items-center justify-between text-zinc-700">
-                        <span>Cleared: {accounted.toFixed(2)}m / {totalSent.toFixed(2)}m</span>
+                        <span>
+                          Cleared: {isBatchPieces ? Math.round(accounted) : accounted.toFixed(2)} /{" "}
+                          {isBatchPieces ? Math.round(totalSent) : totalSent.toFixed(2)} {unitText}
+                        </span>
                         <span className="text-zinc-500 font-sans">
                           {batch.returns?.length || 0} delivery slip(s) received
                         </span>
@@ -610,9 +813,13 @@ export default function OutsourceBatchManager({
                         type="button"
                         onClick={() => {
                           setActiveReturnBatch(batch);
-                          const remaining = Number((Number(batch.sentMeters) - Number(batch.accountedMeters || 0)).toFixed(2));
-                          setAccountedMetersInput(remaining.toString());
-                          setReceivedMetersInput("");
+                          const remaining = Number(
+                            (Number(batch.sentMeters) - Number(batch.accountedMeters || 0)).toFixed(2)
+                          );
+                          setAccountedQtyInput(
+                            isBatchPieces ? Math.round(remaining).toString() : remaining.toString()
+                          );
+                          setReceivedQtyInput("");
                         }}
                         className="h-8 px-3 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium rounded-md flex items-center gap-1.5 shadow-xs cursor-pointer"
                       >
@@ -645,46 +852,65 @@ export default function OutsourceBatchManager({
             </div>
           ) : (
             <div className="divide-y divide-zinc-100 text-xs space-y-2">
-              {completedBatches.slice(0, 6).map((batch) => (
-                <div key={batch.id} className="pt-2.5 pb-2.5 flex flex-col space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-zinc-900">{batch.ogpNumber}</span>
-                      {batch.inward?.partyChallanNo && (
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
-                          Ref: #{batch.inward.partyChallanNo}
+              {completedBatches.slice(0, 6).map((batch) => {
+                const isBatchPieces =
+                  batch.itemCategory === "PIECES" || batch.unit === "PIECES";
+                const unitText = isBatchPieces
+                  ? "pcs"
+                  : batch.unit === "YARDS"
+                  ? "yd"
+                  : "m";
+
+                return (
+                  <div key={batch.id} className="pt-2.5 pb-2.5 flex flex-col space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-zinc-900">{batch.ogpNumber}</span>
+                        {batch.inward?.partyChallanNo && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                            Ref: #{batch.inward.partyChallanNo}
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-50 border border-zinc-200 text-zinc-600">
+                          {isBatchPieces ? "Pieces" : "Continuous"}
                         </span>
-                      )}
+                      </div>
+                      <div className="text-right font-mono font-bold text-zinc-900">
+                        {isBatchPieces
+                          ? `${Math.round(Number(batch.receivedMeters || 0))} pcs received`
+                          : `${Number(batch.receivedMeters || 0).toFixed(2)}m received`}
+                      </div>
                     </div>
-                    <div className="text-right font-mono font-bold text-zinc-900">
-                      {Number(batch.receivedMeters || 0).toFixed(2)}m received
-                    </div>
-                  </div>
 
-                  <div className="flex items-center justify-between text-zinc-600 text-[11px]">
-                    <span>
-                      {batch.party.name} • {batch.targetShade} ({batch.vendor.name})
-                    </span>
-                    <span className="font-mono text-rose-700 font-medium">
-                      Shrinkage: -{Number(batch.shrinkageMeters || 0).toFixed(2)}m (
-                      {Number(batch.shrinkagePercent || 0).toFixed(2)}%)
-                    </span>
-                  </div>
-
-                  {batch.vendorChallanNo && (
-                    <div className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
-                      <FileText className="w-3 h-3 text-zinc-400" />
-                      <span>Dyer Delivery Slips: {batch.vendorChallanNo}</span>
+                    <div className="flex items-center justify-between text-zinc-600 text-[11px]">
+                      <span>
+                        {batch.party.name} • {batch.targetShade} ({batch.vendor.name})
+                      </span>
+                      <span className="font-mono text-rose-700 font-medium">
+                        Loss: -
+                        {isBatchPieces
+                          ? `${Math.round(Number(batch.shrinkageMeters || 0))} pcs`
+                          : `${Number(batch.shrinkageMeters || 0).toFixed(2)}m (${Number(
+                              batch.shrinkagePercent || 0
+                            ).toFixed(2)}%)`}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {batch.vendorChallanNo && (
+                      <div className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
+                        <FileText className="w-3 h-3 text-zinc-400" />
+                        <span>Dyer Delivery Slips: {batch.vendorChallanNo}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* RECEIVE RETURN MODAL / DRAWER (PARTIAL OR FULL WITH TECHNICAL SHRINKAGE) */}
+      {/* RECEIVE RETURN MODAL / DRAWER */}
       {activeReturnBatch && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-zinc-200 rounded-xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
@@ -718,16 +944,32 @@ export default function OutsourceBatchManager({
                 <span className="font-semibold text-zinc-900">{activeReturnBatch.vendor.name}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-zinc-500 font-sans">Category / Unit:</span>
+                <span className="font-bold text-zinc-900 uppercase">
+                  {isReturnPieces ? "Cut Pieces (Pcs)" : `Continuous Fabric (${returnUnitLabel})`}
+                </span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Total Dispatched Lot:</span>
-                <span className="font-bold text-zinc-900">{sentMetersNum.toFixed(2)}m</span>
+                <span className="font-bold text-zinc-900">
+                  {isReturnPieces ? `${Math.round(sentQtyNum)} pcs` : `${sentQtyNum.toFixed(2)}${returnUnitLabel}`}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Previously Accounted:</span>
-                <span className="text-zinc-700">{prevAccountedNum.toFixed(2)}m</span>
+                <span className="text-zinc-700">
+                  {isReturnPieces
+                    ? `${Math.round(prevAccountedNum)} pcs`
+                    : `${prevAccountedNum.toFixed(2)}${returnUnitLabel}`}
+                </span>
               </div>
               <div className="flex justify-between pt-1 border-t border-zinc-200 font-bold">
                 <span className="text-amber-800 font-sans">Remaining Pending with Dyer:</span>
-                <span className="text-amber-900">{pendingMetersNum.toFixed(2)}m</span>
+                <span className="text-amber-900">
+                  {isReturnPieces
+                    ? `${Math.round(pendingQtyNum)} pcs`
+                    : `${pendingQtyNum.toFixed(2)}${returnUnitLabel}`}
+                </span>
               </div>
             </div>
 
@@ -759,22 +1001,27 @@ export default function OutsourceBatchManager({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-                    Dispatched Lot Meters Accounted *
+                    {isReturnPieces
+                      ? "Dispatched Lot Pieces Accounted *"
+                      : "Dispatched Lot Quantity Accounted *"}
                   </label>
                   <span className="text-[11px] font-mono text-zinc-500">
-                    Max Pending: {pendingMetersNum.toFixed(2)}m
+                    Max Pending:{" "}
+                    {isReturnPieces
+                      ? `${Math.round(pendingQtyNum)} pcs`
+                      : `${pendingQtyNum.toFixed(2)}${returnUnitLabel}`}
                   </span>
                 </div>
                 <input
                   type="number"
-                  step="0.01"
-                  name="accountedMeters"
+                  step={isReturnPieces ? "1" : "0.01"}
+                  name="accountedQty"
                   required
-                  min="0.01"
-                  max={pendingMetersNum}
+                  min={isReturnPieces ? "1" : "0.01"}
+                  max={pendingQtyNum}
                   inputMode="decimal"
-                  value={accountedMetersInput}
-                  onChange={(e) => setAccountedMetersInput(e.target.value)}
+                  value={accountedQtyInput}
+                  onChange={(e) => setAccountedQtyInput(e.target.value)}
                   className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
                     isOverPendingError
                       ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20"
@@ -782,56 +1029,65 @@ export default function OutsourceBatchManager({
                   }`}
                 />
                 <span className="text-[11px] text-zinc-500 block mt-1">
-                  Leave at {pendingMetersNum.toFixed(2)}m for complete return, or enter smaller value for partial delivery.
+                  Leave at {isReturnPieces ? Math.round(pendingQtyNum) : pendingQtyNum.toFixed(2)} for complete return, or enter smaller value for partial delivery.
                 </span>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-                    Physical Received Meters (from Dyer Slip) *
+                    {isReturnPieces
+                      ? "Physical Received Pieces (from Dyer Slip) *"
+                      : `Physical Received Length (${returnUnitLabel}) *`}
                   </label>
-                  {receivedMetersNum > 0 && (
+                  {receivedQtyNum > 0 && !isReturnPieces && (
                     <span className="text-[11px] font-mono text-zinc-500">
-                      ≈ {metersToYards(receivedMetersNum).toFixed(1)} yds
+                      {returnUnitLabel === "m"
+                        ? `≈ ${metersToYards(receivedQtyNum).toFixed(1)} yd`
+                        : `≈ ${yardsToMeters(receivedQtyNum).toFixed(1)} m`}
                     </span>
                   )}
                 </div>
                 <input
                   type="number"
-                  step="0.01"
-                  name="receivedMeters"
+                  step={isReturnPieces ? "1" : "0.01"}
+                  name="receivedQty"
                   required
-                  min="0.01"
+                  min={isReturnPieces ? "1" : "0.01"}
                   inputMode="decimal"
-                  value={receivedMetersInput}
-                  onChange={(e) => setReceivedMetersInput(e.target.value)}
-                  placeholder="e.g. 2450.00"
+                  value={receivedQtyInput}
+                  onChange={(e) => setReceivedQtyInput(e.target.value)}
+                  placeholder={isReturnPieces ? "e.g. 495" : "e.g. 2450.00"}
                   className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                 />
               </div>
 
-              {receivedMetersNum > 0 && (
+              {receivedQtyNum > 0 && (
                 <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-md text-xs space-y-1.5">
                   <div className="flex justify-between font-mono">
-                    <span className="text-rose-800 font-medium">Technical Shrinkage Loss:</span>
+                    <span className="text-rose-800 font-medium">
+                      {isReturnPieces ? "Vendor Loss / Damaged:" : "Technical Shrinkage Loss:"}
+                    </span>
                     <span className="font-bold text-rose-900">
-                      -{calculatedShrinkage.toFixed(2)}m{" "}
-                      <span className="text-rose-700 font-normal">
-                        (≈ {metersToYards(calculatedShrinkage).toFixed(1)} yds)
-                      </span>
+                      -{isReturnPieces ? `${Math.round(calculatedShrinkage)} pcs` : `${calculatedShrinkage.toFixed(2)}${returnUnitLabel}`}
                     </span>
                   </div>
-                  <div className="flex justify-between font-mono">
-                    <span className="text-rose-800 font-medium">Shrinkage Rate:</span>
-                    <span className="font-bold text-rose-900">{calculatedPercent.toFixed(2)}%</span>
-                  </div>
+                  {!isReturnPieces && (
+                    <div className="flex justify-between font-mono">
+                      <span className="text-rose-800 font-medium">Shrinkage Rate:</span>
+                      <span className="font-bold text-rose-900">{calculatedPercent.toFixed(2)}%</span>
+                    </div>
+                  )}
                   <div className="pt-1.5 border-t border-rose-200/60 flex justify-between font-mono">
-                    <span className="text-zinc-700 font-sans">Batch Status After This Delivery:</span>
-                    <span className={`font-bold ${remainingAfterThisDelivery <= 0.05 ? "text-emerald-700" : "text-blue-700"}`}>
+                    <span className="text-zinc-700 font-sans">Batch Status After Delivery:</span>
+                    <span
+                      className={`font-bold ${
+                        remainingAfterThisDelivery <= 0.05 ? "text-emerald-700" : "text-blue-700"
+                      }`}
+                    >
                       {remainingAfterThisDelivery <= 0.05
-                        ? "RECEIVED_COMPLETE (0.00m left)"
-                        : `RECEIVED_PARTIAL (${remainingAfterThisDelivery.toFixed(2)}m left with dyer)`}
+                        ? "RECEIVED_COMPLETE (0 remaining)"
+                        : `RECEIVED_PARTIAL (${isReturnPieces ? Math.round(remainingAfterThisDelivery) : remainingAfterThisDelivery.toFixed(2)} ${returnUnitLabel} left)`}
                     </span>
                   </div>
                 </div>
@@ -844,7 +1100,7 @@ export default function OutsourceBatchManager({
                 <input
                   type="text"
                   name="remarks"
-                  placeholder="e.g. Received partial 1st delivery on truck #LES-421"
+                  placeholder="e.g. Received partial delivery on truck #LES-421"
                   className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                 />
               </div>
@@ -852,10 +1108,7 @@ export default function OutsourceBatchManager({
               <div className="pt-2 flex gap-2">
                 <button
                   type="submit"
-                  disabled={isReturning || isOverPendingError || receivedMetersNum <= 0}
-                  onClick={() => {
-                    setTimeout(() => setActiveReturnBatch(null), 800);
-                  }}
+                  disabled={isReturning || isOverPendingError || receivedQtyNum <= 0}
                   className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold uppercase tracking-wider rounded-md flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
