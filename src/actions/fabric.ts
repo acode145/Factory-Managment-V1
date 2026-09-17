@@ -998,11 +998,28 @@ export async function returnOutsourceBatchAction(
     }
 
     const isPieces = batch.itemCategory === "PIECES" || batch.unit === "PIECES";
-    const unitLabel = isPieces ? "pcs" : batch.unit === "YARDS" ? "yd" : "m";
+    const selectedReturnUnit = formData.get("returnUnit") as string | null;
 
-    const totalSent = Number(batch.sentMeters);
-    const prevAccounted = Number(batch.accountedMeters || 0);
-    const pendingWithVendor = Number((totalSent - prevAccounted).toFixed(2));
+    if (!isPieces && !selectedReturnUnit) {
+      return { error: "Please select delivery slip unit (Meters or Yards)." };
+    }
+
+    const effectiveUnit = isPieces ? "PIECES" : (selectedReturnUnit || batch.unit || "METERS");
+    const unitLabel = isPieces ? "pcs" : effectiveUnit === "YARDS" ? "yd" : "m";
+
+    const totalSentInBatchUnit = Number(batch.sentMeters);
+    const prevAccountedInBatchUnit = Number(batch.accountedMeters || 0);
+    const pendingInBatchUnit = Math.max(0, totalSentInBatchUnit - prevAccountedInBatchUnit);
+
+    // Convert pending to effectiveUnit
+    let pendingWithVendor = pendingInBatchUnit;
+    if (!isPieces) {
+      if (batch.unit === "YARDS" && effectiveUnit === "METERS") {
+        pendingWithVendor = Number(yardsToMeters(pendingInBatchUnit).toFixed(2));
+      } else if (batch.unit === "METERS" && effectiveUnit === "YARDS") {
+        pendingWithVendor = Number(metersToYards(pendingInBatchUnit).toFixed(2));
+      }
+    }
 
     const accountedQty = parsed.data.accountedQty ?? pendingWithVendor;
 
@@ -1016,12 +1033,29 @@ export async function returnOutsourceBatchAction(
     const shrinkagePercent =
       accountedQty > 0 ? Number(((shrinkageQty / accountedQty) * 100).toFixed(2)) : 0;
 
+    // What needs to be added to batch.accountedMeters (in batch.unit)?
+    let accountedInBatchUnit = accountedQty;
+    let receivedInBatchUnit = receivedQty;
+    let shrinkageInBatchUnit = shrinkageQty;
+
+    if (!isPieces) {
+      if (effectiveUnit === "METERS" && batch.unit === "YARDS") {
+        accountedInBatchUnit = Number(metersToYards(accountedQty).toFixed(2));
+        receivedInBatchUnit = Number(metersToYards(receivedQty).toFixed(2));
+        shrinkageInBatchUnit = Number(metersToYards(shrinkageQty).toFixed(2));
+      } else if (effectiveUnit === "YARDS" && batch.unit === "METERS") {
+        accountedInBatchUnit = Number(yardsToMeters(accountedQty).toFixed(2));
+        receivedInBatchUnit = Number(yardsToMeters(receivedQty).toFixed(2));
+        shrinkageInBatchUnit = Number(yardsToMeters(shrinkageQty).toFixed(2));
+      }
+    }
+
     await prisma.$transaction(async (tx: any) => {
       await tx.outsourceBatchReturn.create({
         data: {
           batchId,
           vendorChallanNo,
-          unit: batch.unit || "METERS",
+          unit: effectiveUnit,
           accountedMeters: accountedQty,
           receivedMeters: receivedQty,
           shrinkageMeters: shrinkageQty,
@@ -1032,10 +1066,10 @@ export async function returnOutsourceBatchAction(
         },
       });
 
-      const newAccounted = Number((prevAccounted + accountedQty).toFixed(2));
-      const newReceived = Number(((Number(batch.receivedMeters) || 0) + receivedQty).toFixed(2));
-      const newShrinkage = Number(((Number(batch.shrinkageMeters) || 0) + shrinkageQty).toFixed(2));
-      const isComplete = newAccounted >= totalSent - 0.05;
+      const newAccounted = Number((prevAccountedInBatchUnit + accountedInBatchUnit).toFixed(2));
+      const newReceived = Number(((Number(batch.receivedMeters) || 0) + receivedInBatchUnit).toFixed(2));
+      const newShrinkage = Number(((Number(batch.shrinkageMeters) || 0) + shrinkageInBatchUnit).toFixed(2));
+      const isComplete = newAccounted >= totalSentInBatchUnit - 0.05;
       const newStatus = isComplete ? "RECEIVED_COMPLETE" : "RECEIVED_PARTIAL";
 
       const existingSlip = batch.vendorChallanNo;
@@ -1123,7 +1157,7 @@ export async function returnOutsourceBatchAction(
     revalidatePath("/outsource");
     revalidatePath("/ledger");
 
-    const remaining = Number((totalSent - (prevAccounted + accountedQty)).toFixed(2));
+    const remaining = Number((pendingWithVendor - accountedQty).toFixed(2));
     const remainingText = remaining > 0 ? ` (Remaining with vendor: ${remaining} ${unitLabel})` : " (Batch completed)";
 
     return {
