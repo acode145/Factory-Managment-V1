@@ -844,7 +844,17 @@ export async function createOutsourceDispatchAction(
     await prisma.$transaction(async (tx: any) => {
       for (const item of itemsToDispatch) {
         let inwardChallanNo: string | null = null;
-        if (item.inwardId) {
+        let lotItemInfo: any = null;
+
+        if (item.inwardItemId) {
+          lotItemInfo = await tx.fabricInwardItem.findUnique({
+            where: { id: item.inwardItemId },
+            include: { inward: { select: { partyChallanNo: true } } },
+          });
+          if (lotItemInfo?.inward?.partyChallanNo) {
+            inwardChallanNo = lotItemInfo.inward.partyChallanNo;
+          }
+        } else if (item.inwardId) {
           const inward = await tx.fabricInward.findUnique({
             where: { id: item.inwardId },
             select: { partyChallanNo: true },
@@ -860,6 +870,13 @@ export async function createOutsourceDispatchAction(
           : item.unit === "YARDS"
           ? yardsToMeters(item.sentQty)
           : item.sentQty;
+
+        const fabricDesc = lotItemInfo
+          ? `${lotItemInfo.fabricType} (${lotItemInfo.colorShade})`
+          : null;
+        const lotPrefix = lotItemInfo
+          ? `[Lot #${lotItemInfo.itemIndex + 1}: ${lotItemInfo.fabricType}] `
+          : "";
 
         await tx.outsourceBatch.create({
           data: {
@@ -889,6 +906,7 @@ export async function createOutsourceDispatchAction(
               inwardId: item.inwardId || null,
               inwardItemId: item.inwardItemId || null,
               itemCategory: "PIECES",
+              fabricDescription: fabricDesc,
               unit: "PIECES",
               movementType: "OUTWARD_TO_VENDOR",
               referenceNumber: ogpNumber,
@@ -900,7 +918,7 @@ export async function createOutsourceDispatchAction(
               shortagePieces: 0,
               runningPieces: 0,
               timestamp: dateDispatch,
-              notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade}) - ${sentPieces} pcs${
+              notes: `Dispatched to ${vendor.name} ${lotPrefix}for ${item.processType} (Target: ${item.targetShade}) - ${sentPieces} pcs${
                 inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
               }`,
             },
@@ -914,6 +932,7 @@ export async function createOutsourceDispatchAction(
               inwardId: item.inwardId || null,
               inwardItemId: item.inwardItemId || null,
               itemCategory: "CONTINUOUS",
+              fabricDescription: fabricDesc,
               unit: item.unit,
               movementType: "OUTWARD_TO_VENDOR",
               referenceNumber: ogpNumber,
@@ -922,7 +941,7 @@ export async function createOutsourceDispatchAction(
               shrinkageMeters: 0,
               runningBalance: 0,
               timestamp: dateDispatch,
-              notes: `Dispatched to ${vendor.name} for ${item.processType} (Target: ${item.targetShade}) - ${item.sentQty} ${unitSuffix}${
+              notes: `Dispatched to ${vendor.name} ${lotPrefix}for ${item.processType} (Target: ${item.targetShade}) - ${item.sentQty} ${unitSuffix}${
                 item.unit === "YARDS" ? ` (≈ ${stdQty.toFixed(2)}m)` : ""
               }${inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""}`,
             },
@@ -1002,7 +1021,7 @@ export async function returnOutsourceBatchAction(
   try {
     const batch = await prisma.outsourceBatch.findUnique({
       where: { id: batchId },
-      include: { vendor: true, inward: true },
+      include: { vendor: true, inward: true, inwardItem: true },
     });
 
     if (!batch) {
@@ -1114,6 +1133,14 @@ export async function returnOutsourceBatchAction(
       });
 
       const inwardRef = batch.inward?.partyChallanNo;
+      const lotInfo = batch.inwardItem;
+      const fabricDesc = lotInfo
+        ? `${lotInfo.fabricType} (${lotInfo.colorShade})`
+        : null;
+      const lotPrefix = lotInfo
+        ? `[Lot #${lotInfo.itemIndex + 1}: ${lotInfo.fabricType}] `
+        : "";
+
       if (isPieces) {
         const accountedPcs = Math.round(accountedQty);
         const receivedPcs = Math.round(receivedQty);
@@ -1126,6 +1153,7 @@ export async function returnOutsourceBatchAction(
             inwardId: batch.inwardId || null,
             inwardItemId: batch.inwardItemId || null,
             itemCategory: "PIECES",
+            fabricDescription: fabricDesc,
             unit: "PIECES",
             movementType: "INWARD_FROM_VENDOR",
             referenceNumber: batch.ogpNumber,
@@ -1137,9 +1165,9 @@ export async function returnOutsourceBatchAction(
             shortagePieces: lossPcs,
             runningPieces: 0,
             timestamp: dateReturn,
-            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
-              inwardRef ? ` [Ref: #${inwardRef}]` : ""
-            } (${batch.processType}, ${batch.targetShade}). Received: ${receivedPcs} pcs | Vendor Loss: ${lossPcs} pcs [Accounted: ${accountedPcs} pcs]`,
+            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo} ${lotPrefix}${
+              inwardRef ? `[Ref: #${inwardRef}] ` : ""
+            }(${batch.processType}, ${batch.targetShade}). Received: ${receivedPcs} pcs | Vendor Loss: ${lossPcs} pcs [Accounted: ${accountedPcs} pcs]`,
           },
         });
       } else {
@@ -1153,6 +1181,7 @@ export async function returnOutsourceBatchAction(
             inwardId: batch.inwardId || null,
             inwardItemId: batch.inwardItemId || null,
             itemCategory: "CONTINUOUS",
+            fabricDescription: fabricDesc,
             unit: batch.unit || "METERS",
             movementType: "INWARD_FROM_VENDOR",
             referenceNumber: batch.ogpNumber,
@@ -1161,9 +1190,9 @@ export async function returnOutsourceBatchAction(
             shrinkageMeters: stdShrinkage > 0 ? stdShrinkage : 0,
             runningBalance: 0,
             timestamp: dateReturn,
-            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo}${
-              inwardRef ? ` [Ref: #${inwardRef}]` : ""
-            } (${batch.processType}, ${batch.targetShade}). Received: ${receivedQty.toFixed(2)}${unitLabel} | Technical Shrinkage: ${shrinkageQty.toFixed(2)}${unitLabel} (${shrinkagePercent.toFixed(2)}%) [Accounted: ${accountedQty.toFixed(2)}${unitLabel}]`,
+            notes: `Received from ${batch.vendor.name} Dyer Slip #${vendorChallanNo} ${lotPrefix}${
+              inwardRef ? `[Ref: #${inwardRef}] ` : ""
+            }(${batch.processType}, ${batch.targetShade}). Received: ${receivedQty.toFixed(2)}${unitLabel} | Technical Shrinkage: ${shrinkageQty.toFixed(2)}${unitLabel} (${shrinkagePercent.toFixed(2)}%) [Accounted: ${accountedQty.toFixed(2)}${unitLabel}]`,
           },
         });
       }
@@ -1194,6 +1223,7 @@ export async function returnOutsourceBatchAction(
 const DeliverySchema = z.object({
   partyId: z.string().min(1, "Party selection is required"),
   inwardId: z.string().optional(),
+  inwardItemId: z.string().optional(),
   fabricType: z.string().trim().min(1, "Fabric specification is required"),
   colorShade: z.string().trim().min(1, "Color / Shade is required"),
   totalRolls: z.coerce.number().int().positive("Roll count must be at least 1"),
@@ -1211,6 +1241,7 @@ export async function createDeliveryChallanAction(
   const rawData = {
     partyId: formData.get("partyId"),
     inwardId: formData.get("inwardId") || undefined,
+    inwardItemId: formData.get("inwardItemId") || undefined,
     fabricType: formData.get("fabricType"),
     colorShade: formData.get("colorShade"),
     totalRolls: formData.get("totalRolls"),
@@ -1224,7 +1255,7 @@ export async function createDeliveryChallanAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { partyId, inwardId, fabricType, colorShade, totalRolls, totalMeters, vehicleDriver, remarks } =
+  const { partyId, inwardId, inwardItemId, fabricType, colorShade, totalRolls, totalMeters, vehicleDriver, remarks } =
     parsed.data;
 
   const dateDelivery = parseLedgerDate(undefined, 4);
@@ -1232,13 +1263,30 @@ export async function createDeliveryChallanAction(
 
   try {
     let inwardChallanNo: string | null = null;
-    if (inwardId) {
+    let lotItemInfo: any = null;
+
+    if (inwardItemId) {
+      lotItemInfo = await prisma.fabricInwardItem.findUnique({
+        where: { id: inwardItemId },
+        include: { inward: { select: { partyChallanNo: true } } },
+      });
+      if (lotItemInfo?.inward?.partyChallanNo) {
+        inwardChallanNo = lotItemInfo.inward.partyChallanNo;
+      }
+    } else if (inwardId) {
       const inward = await prisma.fabricInward.findUnique({
         where: { id: inwardId },
         select: { partyChallanNo: true },
       });
       if (inward) inwardChallanNo = inward.partyChallanNo;
     }
+
+    const lotPrefix = lotItemInfo
+      ? `[Lot #${lotItemInfo.itemIndex + 1}: ${lotItemInfo.fabricType}] `
+      : "";
+    const fabricDesc = lotItemInfo
+      ? `${lotItemInfo.fabricType} (${lotItemInfo.colorShade})`
+      : `${fabricType} (${colorShade})`;
 
     await prisma.$transaction(async (tx: any) => {
       const challan = await tx.deliveryChallan.create({
@@ -1252,7 +1300,7 @@ export async function createDeliveryChallanAction(
           dispatchedById: session.userId,
           items: {
             create: {
-              inwardId: inwardId || null,
+              inwardId: inwardId || (lotItemInfo ? lotItemInfo.inwardId : null),
               fabricType,
               colorShade,
               metersDelivered: totalMeters,
@@ -1266,8 +1314,10 @@ export async function createDeliveryChallanAction(
         data: {
           partyId,
           partyChallanNo: inwardChallanNo,
-          inwardId: inwardId || null,
+          inwardId: inwardId || (lotItemInfo ? lotItemInfo.inwardId : null),
+          inwardItemId: inwardItemId || null,
           itemCategory: "CONTINUOUS",
+          fabricDescription: fabricDesc,
           movementType: "DELIVERY_TO_PARTY",
           referenceNumber: challanNumber,
           creditMeters: 0,
@@ -1275,9 +1325,9 @@ export async function createDeliveryChallanAction(
           shrinkageMeters: 0,
           runningBalance: 0,
           timestamp: dateDelivery,
-          notes: `Dispatched on Delivery Challan #${challanNumber}${
-            inwardChallanNo ? ` [Ref: #${inwardChallanNo}]` : ""
-          } (${totalRolls} rolls of ${colorShade} ${fabricType})`,
+          notes: `Dispatched on Delivery Challan #${challanNumber} ${lotPrefix}${
+            inwardChallanNo ? `[Ref: #${inwardChallanNo}] ` : ""
+          }(${totalRolls} rolls of ${colorShade} ${fabricType})`,
         },
       });
 

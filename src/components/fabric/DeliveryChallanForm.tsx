@@ -22,6 +22,17 @@ interface InwardOption {
   measuredMeters: number;
   availableMeters: number;
   party?: { name: string; code: string };
+  items?: Array<{
+    id: string;
+    itemIndex: number;
+    fabricType: string;
+    colorShade: string;
+    unit: string;
+    rollCount: number;
+    measuredQty: number;
+    availableMeters?: number | null;
+    availableQty?: number;
+  }>;
 }
 
 export default function DeliveryChallanForm({
@@ -38,6 +49,7 @@ export default function DeliveryChallanForm({
 
   const [selectedPartyId, setSelectedPartyId] = useState("");
   const [selectedInwardId, setSelectedInwardId] = useState("");
+  const [selectedInwardItemId, setSelectedInwardItemId] = useState("");
   const [deliveryMeters, setDeliveryMeters] = useState("");
   const [fabricType, setFabricType] = useState("");
   const [colorShade, setColorShade] = useState("");
@@ -45,8 +57,11 @@ export default function DeliveryChallanForm({
   const currentParty = parties.find((p) => p.id === selectedPartyId);
   const partyInwards = inwards.filter((i) => i.partyId === selectedPartyId);
   const currentInward = inwards.find((i) => i.id === selectedInwardId);
+  const currentItem = currentInward?.items?.find((it) => it.id === selectedInwardItemId);
 
-  const maxAvailable = currentInward
+  const maxAvailable = currentItem
+    ? (currentItem.availableMeters ?? currentItem.availableQty ?? currentItem.measuredQty)
+    : currentInward
     ? currentInward.availableMeters
     : currentParty?.balance || 0;
   const numMeters = parseFloat(deliveryMeters) || 0;
@@ -54,11 +69,30 @@ export default function DeliveryChallanForm({
 
   const handleInwardChange = (inwardId: string) => {
     setSelectedInwardId(inwardId);
+    setSelectedInwardItemId("");
     if (inwardId) {
       const inward = inwards.find((i) => i.id === inwardId);
       if (inward) {
-        if (!fabricType) setFabricType(inward.fabricType);
-        if (!colorShade) setColorShade(inward.colorShade);
+        if (inward.items && inward.items.length === 1) {
+          const onlyItem = inward.items[0];
+          setSelectedInwardItemId(onlyItem.id);
+          setFabricType(onlyItem.fabricType);
+          setColorShade(onlyItem.colorShade);
+        } else {
+          setFabricType(inward.fabricType || "");
+          setColorShade(inward.colorShade || "");
+        }
+      }
+    }
+  };
+
+  const handleLotItemChange = (itemId: string) => {
+    setSelectedInwardItemId(itemId);
+    if (itemId && currentInward?.items) {
+      const item = currentInward.items.find((it) => it.id === itemId);
+      if (item) {
+        setFabricType(item.fabricType);
+        setColorShade(item.colorShade);
       }
     }
   };
@@ -111,6 +145,7 @@ export default function DeliveryChallanForm({
               onChange={(e) => {
                 setSelectedPartyId(e.target.value);
                 setSelectedInwardId("");
+                setSelectedInwardItemId("");
               }}
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             >
@@ -126,11 +161,11 @@ export default function DeliveryChallanForm({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-                Originating Inward Lot Ref # (Optional)
+                Originating Inward Challan Ref #
               </label>
               {currentInward && (
                 <span className="text-xs font-mono font-medium text-emerald-700">
-                  Lot Avail: <strong>{currentInward.availableMeters.toFixed(2)}m</strong>
+                  Challan Avail: <strong>{currentInward.availableMeters.toFixed(2)}m</strong>
                 </span>
               )}
             </div>
@@ -140,7 +175,7 @@ export default function DeliveryChallanForm({
               onChange={(e) => handleInwardChange(e.target.value)}
               className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             >
-              <option value="">-- General Factory Stock / Tag Specific Lot --</option>
+              <option value="">-- General Factory Stock / Tag Specific Challan --</option>
               {partyInwards.map((i) => (
                 <option key={i.id} value={i.id}>
                   #{i.partyChallanNo} ({i.fabricType}, {i.colorShade}) — Avail: {i.availableMeters.toFixed(2)}m
@@ -148,6 +183,34 @@ export default function DeliveryChallanForm({
               ))}
             </select>
           </div>
+
+          {currentInward?.items && currentInward.items.length > 0 && (
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                  Specific Lot in Challan #{currentInward.partyChallanNo} *
+                </label>
+                {currentItem && (
+                  <span className="text-xs font-mono font-medium text-emerald-700">
+                    Lot Avail: <strong>{(currentItem.availableMeters ?? currentItem.availableQty ?? currentItem.measuredQty).toFixed(2)} {currentItem.unit === "PIECES" ? "pcs" : "m"}</strong>
+                  </span>
+                )}
+              </div>
+              <select
+                name="inwardItemId"
+                value={selectedInwardItemId}
+                onChange={(e) => handleLotItemChange(e.target.value)}
+                className="w-full h-12 px-3.5 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              >
+                <option value="">-- Select Specific Lot Item --</option>
+                {currentInward.items.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — Measured: {it.measuredQty} {it.unit} (Avail: {(it.availableMeters ?? it.availableQty ?? it.measuredQty).toFixed(2)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Row: Fabric Type & Color */}

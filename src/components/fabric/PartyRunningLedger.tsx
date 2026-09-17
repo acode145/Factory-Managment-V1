@@ -35,6 +35,9 @@ export interface LedgerEntry {
   runningPieces?: number;
   timestamp: Date;
   notes: string | null;
+  lotNumber?: number | null;
+  lotFabricType?: string | null;
+  lotColorShade?: string | null;
 }
 
 interface PartySummary {
@@ -63,6 +66,7 @@ export default function PartyRunningLedger({
 }) {
   const [selectedPartyId, setSelectedPartyId] = useState<string>(parties[0]?.id || "");
   const [selectedChallan, setSelectedChallan] = useState<string>("ALL");
+  const [selectedLot, setSelectedLot] = useState<string>("ALL");
   const [continuousUnit, setContinuousUnit] = useState<"METERS" | "YARDS">("METERS");
 
   const partyEntries = entries.filter((e) => e.partyId === selectedPartyId);
@@ -77,11 +81,48 @@ export default function PartyRunningLedger({
     )
   );
 
-  // Filter entries if a specific challan is chosen
-  const filteredEntries =
+  // Candidate entries for discovering available lots
+  const candidateEntriesForLots =
     selectedChallan === "ALL"
       ? partyEntries
       : partyEntries.filter((e) => e.partyChallanNo === selectedChallan);
+
+  // Extract distinct lots for this party / challan
+  const distinctLotsMap = new Map<
+    string,
+    { id: string; lotNumber: number | null; label: string; challanNo: string | null }
+  >();
+  for (const e of candidateEntriesForLots) {
+    if (e.inwardItemId) {
+      if (!distinctLotsMap.has(e.inwardItemId)) {
+        const lotNumStr = e.lotNumber ? `Lot #${e.lotNumber}` : "Lot";
+        const desc = e.lotFabricType
+          ? `${e.lotFabricType}${e.lotColorShade ? ` (${e.lotColorShade})` : ""}`
+          : e.fabricDescription || "Fabric Lot";
+        const challanPrefix = selectedChallan === "ALL" && e.partyChallanNo ? `[#${e.partyChallanNo}] ` : "";
+        distinctLotsMap.set(e.inwardItemId, {
+          id: e.inwardItemId,
+          lotNumber: e.lotNumber ?? null,
+          label: `${challanPrefix}${lotNumStr}: ${desc}`,
+          challanNo: e.partyChallanNo ?? null,
+        });
+      }
+    }
+  }
+  const availableLots = Array.from(distinctLotsMap.values()).sort((a, b) => {
+    if (a.challanNo !== b.challanNo) return (a.challanNo || "").localeCompare(b.challanNo || "");
+    return (a.lotNumber || 0) - (b.lotNumber || 0);
+  });
+
+  // Filter entries if specific challan or lot is chosen
+  let filteredEntries =
+    selectedChallan === "ALL"
+      ? partyEntries
+      : partyEntries.filter((e) => e.partyChallanNo === selectedChallan);
+
+  if (selectedLot !== "ALL") {
+    filteredEntries = filteredEntries.filter((e) => e.inwardItemId === selectedLot);
+  }
 
   // Separate entries into Continuous Fabric vs Cut Pieces
   const continuousEntries = filteredEntries.filter(
@@ -120,7 +161,7 @@ export default function PartyRunningLedger({
   // 4. In Factory Custody Balance
   // Continuous balance
   const contCurrentBalance =
-    selectedChallan === "ALL"
+    selectedChallan === "ALL" && selectedLot === "ALL"
       ? continuousEntries.length > 0
         ? Number(continuousEntries[0].runningBalance || 0)
         : 0
@@ -137,7 +178,7 @@ export default function PartyRunningLedger({
 
   // Pieces balance
   const piecesCurrentBalance =
-    selectedChallan === "ALL"
+    selectedChallan === "ALL" && selectedLot === "ALL"
       ? piecesEntries.length > 0
         ? Number(piecesEntries[0].runningPieces || 0)
         : 0
@@ -199,6 +240,7 @@ export default function PartyRunningLedger({
             onChange={(e) => {
               setSelectedPartyId(e.target.value);
               setSelectedChallan("ALL");
+              setSelectedLot("ALL");
             }}
             className="h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
           >
@@ -214,7 +256,10 @@ export default function PartyRunningLedger({
             <Filter className="w-3.5 h-3.5 text-zinc-500" />
             <select
               value={selectedChallan}
-              onChange={(e) => setSelectedChallan(e.target.value)}
+              onChange={(e) => {
+                setSelectedChallan(e.target.value);
+                setSelectedLot("ALL");
+              }}
               className="bg-transparent text-xs font-medium text-zinc-900 focus:outline-hidden font-mono cursor-pointer"
             >
               <option value="ALL">All Challans (Consolidated)</option>
@@ -225,6 +270,25 @@ export default function PartyRunningLedger({
               ))}
             </select>
           </div>
+
+          {/* Lot Filter Dropdown */}
+          {availableLots.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-amber-50/60 border border-amber-300 rounded-lg px-2.5 h-10">
+              <Layers className="w-3.5 h-3.5 text-amber-700" />
+              <select
+                value={selectedLot}
+                onChange={(e) => setSelectedLot(e.target.value)}
+                className="bg-transparent text-xs font-medium text-amber-950 focus:outline-hidden font-mono cursor-pointer max-w-xs truncate"
+              >
+                <option value="ALL">All Lots (Consolidated)</option>
+                {availableLots.map((lot) => (
+                  <option key={lot.id} value={lot.id}>
+                    {lot.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <button
             type="button"
@@ -371,13 +435,17 @@ export default function PartyRunningLedger({
               <tr className="border-b border-zinc-200 text-zinc-500 uppercase tracking-wider text-[10px] font-mono bg-zinc-50/70">
                 <th className="py-2.5 px-3">Date</th>
                 <th className="py-2.5 px-3">Reference #</th>
-                <th className="py-2.5 px-3">Party Challan #</th>
+                <th className="py-2.5 px-3">Challan & Lot #</th>
                 <th className="py-2.5 px-3">Fabric & Details</th>
                 <th className="py-2.5 px-3 text-right">Inward (+)</th>
                 <th className="py-2.5 px-3 text-right">Outward / Delivery (-)</th>
                 <th className="py-2.5 px-3 text-right">Shortage / Excess (-+)</th>
                 <th className="py-2.5 px-3 text-right">
-                  {selectedChallan !== "ALL" ? "Lot Balance" : "Running Stock"}
+                  {selectedLot !== "ALL"
+                    ? "Lot Balance"
+                    : selectedChallan !== "ALL"
+                    ? "Challan Balance"
+                    : "Running Stock"}
                 </th>
               </tr>
             </thead>
@@ -391,7 +459,7 @@ export default function PartyRunningLedger({
               ) : (
                 continuousEntries.map((entry) => {
                   const rawBal =
-                    selectedChallan === "ALL"
+                    selectedChallan === "ALL" && selectedLot === "ALL"
                       ? Number(entry.runningBalance)
                       : contRunningByEntryId[entry.id] ?? Number(entry.runningBalance);
 
@@ -429,13 +497,21 @@ export default function PartyRunningLedger({
                         {entry.referenceNumber}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
-                        {entry.partyChallanNo ? (
-                          <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200 font-semibold text-[11px]">
-                            #{entry.partyChallanNo}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-300">—</span>
-                        )}
+                        <div className="flex flex-col gap-1 items-start">
+                          {entry.partyChallanNo ? (
+                            <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200 font-semibold text-[11px] font-mono">
+                              #{entry.partyChallanNo}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-300">—</span>
+                          )}
+                          {entry.lotNumber && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[10px] font-mono flex items-center gap-1">
+                              <Layers className="w-2.5 h-2.5 text-amber-700" />
+                              Lot #{entry.lotNumber}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 font-sans text-zinc-700 max-w-xs">
                         {entry.notes || entry.fabricDescription || entry.movementType}
@@ -529,13 +605,17 @@ export default function PartyRunningLedger({
               <tr className="border-b border-zinc-200 text-zinc-500 uppercase tracking-wider text-[10px] font-mono bg-zinc-50/70">
                 <th className="py-2.5 px-3">Date</th>
                 <th className="py-2.5 px-3">Reference #</th>
-                <th className="py-2.5 px-3">Party Challan #</th>
+                <th className="py-2.5 px-3">Challan & Lot #</th>
                 <th className="py-2.5 px-3">Garment Component / Details</th>
                 <th className="py-2.5 px-3 text-right">Inward (+) [pcs]</th>
                 <th className="py-2.5 px-3 text-right">Outward (-) [pcs]</th>
                 <th className="py-2.5 px-3 text-right">Shortage / Excess (-+) [pcs]</th>
                 <th className="py-2.5 px-3 text-right">
-                  {selectedChallan !== "ALL" ? "Lot Balance [pcs]" : "Running Balance [pcs]"}
+                  {selectedLot !== "ALL"
+                    ? "Lot Balance [pcs]"
+                    : selectedChallan !== "ALL"
+                    ? "Challan Balance [pcs]"
+                    : "Running Balance [pcs]"}
                 </th>
               </tr>
             </thead>
@@ -549,7 +629,7 @@ export default function PartyRunningLedger({
               ) : (
                 piecesEntries.map((entry) => {
                   const displayBal =
-                    selectedChallan === "ALL"
+                    selectedChallan === "ALL" && selectedLot === "ALL"
                       ? entry.runningPieces || 0
                       : piecesRunningByEntryId[entry.id] ?? (entry.runningPieces || 0);
 
@@ -566,13 +646,21 @@ export default function PartyRunningLedger({
                         {entry.referenceNumber}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
-                        {entry.partyChallanNo ? (
-                          <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200 font-semibold text-[11px]">
-                            #{entry.partyChallanNo}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-300">—</span>
-                        )}
+                        <div className="flex flex-col gap-1 items-start">
+                          {entry.partyChallanNo ? (
+                            <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200 font-semibold text-[11px] font-mono">
+                              #{entry.partyChallanNo}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-300">—</span>
+                          )}
+                          {entry.lotNumber && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[10px] font-mono flex items-center gap-1">
+                              <Layers className="w-2.5 h-2.5 text-amber-700" />
+                              Lot #{entry.lotNumber}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 font-sans text-zinc-700 max-w-xs">
                         {entry.notes || entry.fabricDescription || entry.movementType}
@@ -659,6 +747,12 @@ export default function PartyRunningLedger({
                     {entry.partyChallanNo && (
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
                         #{entry.partyChallanNo}
+                      </span>
+                    )}
+                    {entry.lotNumber && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold flex items-center gap-1">
+                        <Layers className="w-2.5 h-2.5 text-amber-700" />
+                        Lot #{entry.lotNumber}
                       </span>
                     )}
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600">

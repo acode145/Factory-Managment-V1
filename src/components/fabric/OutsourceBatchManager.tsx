@@ -1042,6 +1042,11 @@ export default function OutsourceBatchManager({
 
                         <div className="text-xs font-semibold text-zinc-900">
                           {batch.party.name} • {batch.targetShade}
+                          {batch.inwardItem && (
+                            <span className="text-zinc-600 font-normal ml-1">
+                              ({batch.inwardItem.fabricType} - {batch.inwardItem.colorShade})
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-zinc-500">
                           Dyer: <span className="text-zinc-700 font-medium">{batch.vendor.name}</span>{" "}
@@ -1234,6 +1239,14 @@ export default function OutsourceBatchManager({
                 <span className="text-zinc-500">Dyer / Printer:</span>
                 <span className="font-semibold text-zinc-900">{activeReturnBatch.vendor.name}</span>
               </div>
+              {activeReturnBatch.inwardItem && (
+                <div className="flex justify-between font-sans">
+                  <span className="text-zinc-500">Originating Lot Item:</span>
+                  <span className="font-semibold text-zinc-900">
+                    {activeReturnBatch.inwardItem.fabricType} ({activeReturnBatch.inwardItem.colorShade})
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Dispatched Unit:</span>
                 <span className="font-bold text-zinc-900 uppercase">

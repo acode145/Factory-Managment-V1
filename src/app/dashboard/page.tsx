@@ -73,6 +73,17 @@ export default async function DashboardPage({
         { createdAt: "desc" },
         { id: "desc" },
       ],
+      include: {
+        inwardItem: {
+          select: {
+            id: true,
+            itemIndex: true,
+            fabricType: true,
+            colorShade: true,
+            unit: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -123,7 +134,7 @@ export default async function DashboardPage({
     inwardId: e.inwardId,
     inwardItemId: e.inwardItemId,
     itemCategory: e.itemCategory || "CONTINUOUS",
-    fabricDescription: e.fabricDescription,
+    fabricDescription: e.fabricDescription || (e.inwardItem ? `${e.inwardItem.fabricType} (${e.inwardItem.colorShade})` : null),
     unit: e.unit || "METERS",
     movementType: e.movementType,
     referenceNumber: e.referenceNumber,
@@ -137,6 +148,9 @@ export default async function DashboardPage({
     runningPieces: Number(e.runningPieces || 0),
     timestamp: e.timestamp,
     notes: e.notes,
+    lotNumber: e.inwardItem ? e.inwardItem.itemIndex + 1 : null,
+    lotFabricType: e.inwardItem?.fabricType || null,
+    lotColorShade: e.inwardItem?.colorShade || null,
   }));
 
   const inwardList = rawInwardList.map((i: any) => {
