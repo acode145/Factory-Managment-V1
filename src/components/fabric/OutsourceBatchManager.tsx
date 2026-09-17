@@ -57,6 +57,8 @@ interface InwardOption {
     measuredQty: number;
     shortageQty: number;
     standardMeters: number | null;
+    availableQty?: number;
+    availableMeters?: number | null;
   }>;
 }
 
@@ -272,27 +274,83 @@ export default function OutsourceBatchManager({
     .filter((r) => r.unit === "PIECES")
     .reduce((sum, r) => sum + (parseInt(r.sentQty, 10) || 0), 0);
 
-  // Custody balance validation
+  // Custody & Lot balance validation
   let hasOverbalanceError = false;
   const partyUsageContinuousMap: Record<string, number> = {};
   const partyUsagePiecesMap: Record<string, number> = {};
+  const itemUsageMap: Record<string, number> = {};
+  const inwardUsageMap: Record<string, number> = {};
 
+  // First pass: aggregate usages
   for (const row of lotRows) {
     const qty = parseFloat(row.sentQty) || 0;
-    if (row.partyId && qty > 0) {
-      if (row.unit === "PIECES") {
-        partyUsagePiecesMap[row.partyId] =
-          (partyUsagePiecesMap[row.partyId] || 0) + Math.round(qty);
-        const party = parties.find((p) => p.id === row.partyId);
-        if (party && partyUsagePiecesMap[row.partyId] > (party.piecesBalance || 0)) {
-          hasOverbalanceError = true;
+    if (qty > 0) {
+      if (row.partyId) {
+        if (row.unit === "PIECES") {
+          partyUsagePiecesMap[row.partyId] =
+            (partyUsagePiecesMap[row.partyId] || 0) + Math.round(qty);
+        } else {
+          const stdM = row.unit === "YARDS" ? yardsToMeters(qty) : qty;
+          partyUsageContinuousMap[row.partyId] =
+            (partyUsageContinuousMap[row.partyId] || 0) + stdM;
         }
-      } else {
-        const stdM = row.unit === "YARDS" ? yardsToMeters(qty) : qty;
-        partyUsageContinuousMap[row.partyId] =
-          (partyUsageContinuousMap[row.partyId] || 0) + stdM;
+      }
+
+      if (row.inwardItemId) {
+        const stdQty =
+          row.unit === "PIECES"
+            ? Math.round(qty)
+            : row.unit === "YARDS"
+            ? yardsToMeters(qty)
+            : qty;
+        itemUsageMap[row.inwardItemId] = (itemUsageMap[row.inwardItemId] || 0) + stdQty;
+      } else if (row.inwardId) {
+        const stdQty =
+          row.unit === "PIECES"
+            ? Math.round(qty)
+            : row.unit === "YARDS"
+            ? yardsToMeters(qty)
+            : qty;
+        inwardUsageMap[row.inwardId] = (inwardUsageMap[row.inwardId] || 0) + stdQty;
+      }
+    }
+  }
+
+  // Second pass: check party & lot bounds
+  for (const row of lotRows) {
+    const qty = parseFloat(row.sentQty) || 0;
+    if (qty > 0) {
+      if (row.partyId) {
         const party = parties.find((p) => p.id === row.partyId);
-        if (party && partyUsageContinuousMap[row.partyId] > (party.balance || 0)) {
+        if (row.unit === "PIECES") {
+          if (party && (partyUsagePiecesMap[row.partyId] || 0) > (party.piecesBalance || 0)) {
+            hasOverbalanceError = true;
+          }
+        } else {
+          if (party && (partyUsageContinuousMap[row.partyId] || 0) > (party.balance || 0) + 0.005) {
+            hasOverbalanceError = true;
+          }
+        }
+      }
+
+      if (row.inwardItemId) {
+        const matchingInward = inwards.find((i) => i.id === row.inwardId);
+        const matchingItem = matchingInward?.items?.find((it) => it.id === row.inwardItemId);
+        if (matchingItem) {
+          const maxStd =
+            matchingItem.unit === "PIECES"
+              ? matchingItem.availableQty ?? matchingItem.measuredQty ?? 0
+              : matchingItem.availableMeters ??
+                (matchingItem.unit === "YARDS"
+                  ? yardsToMeters(matchingItem.availableQty ?? matchingItem.measuredQty ?? 0)
+                  : matchingItem.availableQty ?? matchingItem.measuredQty ?? 0);
+          if ((itemUsageMap[row.inwardItemId] || 0) > maxStd + 0.005) {
+            hasOverbalanceError = true;
+          }
+        }
+      } else if (row.inwardId) {
+        const matchingInward = inwards.find((i) => i.id === row.inwardId);
+        if (matchingInward && (inwardUsageMap[row.inwardId] || 0) > (matchingInward.availableMeters || 0) + 0.005) {
           hasOverbalanceError = true;
         }
       }
@@ -457,12 +515,67 @@ export default function OutsourceBatchManager({
                 const party = parties.find((p) => p.id === row.partyId);
                 const partyInwards = inwards.filter((i) => i.partyId === row.partyId);
                 const selectedInward = inwards.find((i) => i.id === row.inwardId);
+                const selectedItem = selectedInward?.items?.find((it) => it.id === row.inwardItemId);
                 const parsedQty = parseFloat(row.sentQty) || 0;
 
                 const isPiecesRow = row.unit === "PIECES";
                 const isOverParty = isPiecesRow
                   ? Boolean(party && (partyUsagePiecesMap[row.partyId] || 0) > (party.piecesBalance || 0))
                   : Boolean(party && (partyUsageContinuousMap[row.partyId] || 0) > (party.balance || 0));
+
+                // Lot / Line-Item Available Balances
+                let lotAvailableBadge: string | null = null;
+                let maxAllowedInRowUnit: number | null = null;
+                let isOverLot = false;
+
+                if (selectedItem) {
+                  const isItemPcs = selectedItem.unit === "PIECES";
+                  if (isItemPcs) {
+                    const avail = selectedItem.availableQty ?? selectedItem.measuredQty ?? 0;
+                    maxAllowedInRowUnit = avail;
+                    lotAvailableBadge = `${avail} pcs`;
+                    if (parsedQty > 0 && (itemUsageMap[selectedItem.id] || 0) > avail) {
+                      isOverLot = true;
+                    }
+                  } else {
+                    const availMeters =
+                      selectedItem.availableMeters ??
+                      (selectedItem.unit === "YARDS"
+                        ? yardsToMeters(selectedItem.availableQty ?? selectedItem.measuredQty ?? 0)
+                        : selectedItem.availableQty ?? selectedItem.measuredQty ?? 0);
+                    const availYards = Number(metersToYards(availMeters).toFixed(2));
+
+                    if (row.unit === "YARDS") {
+                      maxAllowedInRowUnit = availYards;
+                    } else if (row.unit === "METERS") {
+                      maxAllowedInRowUnit = availMeters;
+                    }
+
+                    lotAvailableBadge =
+                      selectedItem.unit === "YARDS"
+                        ? `${availYards.toFixed(2)} yd (≈ ${availMeters.toFixed(2)} m)`
+                        : `${availMeters.toFixed(2)} m (≈ ${availYards.toFixed(2)} yd)`;
+
+                    if (parsedQty > 0 && (itemUsageMap[selectedItem.id] || 0) > availMeters + 0.005) {
+                      isOverLot = true;
+                    }
+                  }
+                } else if (selectedInward) {
+                  const availMeters = selectedInward.availableMeters;
+                  const availYards = Number(metersToYards(availMeters).toFixed(2));
+                  if (row.unit === "YARDS") {
+                    maxAllowedInRowUnit = availYards;
+                  } else if (row.unit === "METERS") {
+                    maxAllowedInRowUnit = availMeters;
+                  }
+                  lotAvailableBadge = `${availMeters.toFixed(2)} m (≈ ${availYards.toFixed(2)} yd)`;
+
+                  if (parsedQty > 0 && (inwardUsageMap[selectedInward.id] || 0) > availMeters + 0.005) {
+                    isOverLot = true;
+                  }
+                }
+
+                const isRowInvalid = isOverParty || isOverLot;
 
                 return (
                   <div
@@ -553,6 +666,11 @@ export default function OutsourceBatchManager({
                             ))}
                           </select>
                         )}
+                        {lotAvailableBadge && (
+                          <span className="text-[10px] text-zinc-600 font-mono block mt-1 bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded truncate">
+                            📦 Lot Avail: <strong className="text-zinc-900">{lotAvailableBadge}</strong>
+                          </span>
+                        )}
                       </div>
 
                       {/* Process Type */}
@@ -597,9 +715,20 @@ export default function OutsourceBatchManager({
                           onChange={(e) => updateLotRow(index, "unit", e.target.value)}
                           className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 cursor-pointer"
                         >
-                          <option value="METERS">M</option>
-                          <option value="YARDS">Yd</option>
-                          <option value="PIECES">Pcs</option>
+                          {selectedItem?.unit === "PIECES" ? (
+                            <option value="PIECES">Pcs</option>
+                          ) : selectedItem?.unit && selectedItem.unit !== "PIECES" ? (
+                            <>
+                              <option value="METERS">M</option>
+                              <option value="YARDS">Yd</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="METERS">M</option>
+                              <option value="YARDS">Yd</option>
+                              <option value="PIECES">Pcs</option>
+                            </>
+                          )}
                         </select>
                       </div>
 
@@ -609,11 +738,14 @@ export default function OutsourceBatchManager({
                           <label className="block text-[11px] font-semibold text-zinc-600 uppercase">
                             Sent Qty *
                           </label>
-                          {parsedQty > 0 && (
-                            <span className="text-[10px] font-mono text-zinc-500 font-medium">
-                              {row.unit === "YARDS" && `≈ ${yardsToMeters(parsedQty).toFixed(1)} m`}
-                              {row.unit === "METERS" && `≈ ${metersToYards(parsedQty).toFixed(1)} yd`}
-                              {row.unit === "PIECES" && `${Math.round(parsedQty)} pcs`}
+                          {maxAllowedInRowUnit !== null && (
+                            <span
+                              className={`text-[10px] font-mono font-medium ${
+                                isOverLot ? "text-rose-600 font-bold" : "text-zinc-500"
+                              }`}
+                            >
+                              Max: {maxAllowedInRowUnit.toFixed(row.unit === "PIECES" ? 0 : 2)}{" "}
+                              {row.unit === "PIECES" ? "pcs" : row.unit === "YARDS" ? "yd" : "m"}
                             </span>
                           )}
                         </div>
@@ -626,15 +758,43 @@ export default function OutsourceBatchManager({
                           onChange={(e) => updateLotRow(index, "sentQty", e.target.value)}
                           placeholder={row.unit === "PIECES" ? "e.g. 500" : "e.g. 1000.00"}
                           className={`w-full h-10 px-2.5 bg-white border rounded-md text-xs font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
-                            isOverParty
-                              ? "border-rose-400 bg-rose-50/30 focus:ring-rose-500"
+                            isRowInvalid
+                              ? "border-rose-400 bg-rose-50/30 focus:ring-rose-500 text-rose-950 font-semibold"
                               : "border-zinc-300 focus:ring-zinc-900"
                           }`}
                         />
+                        {parsedQty > 0 && (
+                          <span className="text-[10px] font-mono text-zinc-500 font-medium block mt-1">
+                            {row.unit === "YARDS" && `≈ ${yardsToMeters(parsedQty).toFixed(2)} m`}
+                            {row.unit === "METERS" && `≈ ${metersToYards(parsedQty).toFixed(2)} yd`}
+                            {row.unit === "PIECES" && `${Math.round(parsedQty)} pcs`}
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {isOverParty && (
+                    {isOverLot && (
+                      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 p-2.5 rounded-md flex items-start gap-2 font-medium">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold">Exceeds lot stock! </span>
+                          You cannot dispatch {parsedQty.toFixed(row.unit === "PIECES" ? 0 : 2)}{" "}
+                          {row.unit === "PIECES" ? "pcs" : row.unit === "YARDS" ? "yd" : "m"}.
+                          Maximum available in {selectedItem ? `Lot #${selectedInward?.partyChallanNo} (${selectedItem.fabricType} - ${selectedItem.colorShade})` : `Challan #${selectedInward?.partyChallanNo}`} is{" "}
+                          <strong className="underline">
+                            {maxAllowedInRowUnit?.toFixed(row.unit === "PIECES" ? 0 : 2)}{" "}
+                            {row.unit === "PIECES" ? "pcs" : row.unit === "YARDS" ? "yd" : "m"}
+                          </strong>
+                          {selectedItem && (
+                            <span className="text-zinc-600 font-normal">
+                              {" "}(lot received: {selectedItem.measuredQty} {selectedItem.unit === "PIECES" ? "pcs" : selectedItem.unit === "YARDS" ? "yd" : "m"})
+                            </span>
+                          )}.
+                        </div>
+                      </div>
+                    )}
+
+                    {!isOverLot && isOverParty && (
                       <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 p-2 rounded flex items-center gap-1.5 font-medium">
                         <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                         <span>

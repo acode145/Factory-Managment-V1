@@ -747,6 +747,88 @@ export async function createOutsourceDispatchAction(
       }
     }
 
+    // Validate individual lot & line-item available balances
+    for (const item of itemsToDispatch) {
+      if (item.inwardItemId) {
+        const inwardItem = await prisma.fabricInwardItem.findUnique({
+          where: { id: item.inwardItemId },
+          include: { inward: true },
+        });
+        if (inwardItem) {
+          const itemEntries = await prisma.fabricLedgerEntry.findMany({
+            where: { inwardItemId: item.inwardItemId },
+          });
+          const isItemPieces = inwardItem.unit === "PIECES" || item.unit === "PIECES";
+
+          if (isItemPieces) {
+            let availPieces = Number(inwardItem.measuredQty);
+            if (itemEntries.length > 0) {
+              const c = itemEntries.reduce((s: number, e: any) => s + (e.creditPieces || 0), 0);
+              const d = itemEntries.reduce((s: number, e: any) => s + (e.debitPieces || 0), 0);
+              const sh = itemEntries.reduce((s: number, e: any) => s + (e.shortagePieces || 0), 0);
+              availPieces = Math.max(0, c - d - sh);
+            }
+            const sentPcs = Math.round(item.sentQty);
+            if (sentPcs > availPieces) {
+              return {
+                error: `Cannot dispatch ${sentPcs} pcs. Maximum available in lot #${inwardItem.inward.partyChallanNo} (${inwardItem.fabricType} - ${inwardItem.colorShade}) is ${availPieces} pcs.`,
+              };
+            }
+          } else {
+            let availMeters =
+              inwardItem.standardMeters !== null
+                ? Number(inwardItem.standardMeters)
+                : inwardItem.unit === "YARDS"
+                ? yardsToMeters(Number(inwardItem.measuredQty))
+                : Number(inwardItem.measuredQty);
+
+            if (itemEntries.length > 0) {
+              const c = itemEntries.reduce((s: number, e: any) => s + Number(e.creditMeters || 0), 0);
+              const d = itemEntries.reduce((s: number, e: any) => s + Number(e.debitMeters || 0), 0);
+              const sh = itemEntries.reduce((s: number, e: any) => s + Number(e.shrinkageMeters || 0), 0);
+              availMeters = Math.max(0, Number((c - d - sh).toFixed(2)));
+            }
+
+            const reqMeters = item.unit === "YARDS" ? yardsToMeters(item.sentQty) : item.sentQty;
+            if (reqMeters > availMeters + 0.01) {
+              const maxInSelectedUnit =
+                item.unit === "YARDS" ? Number(metersToYards(availMeters).toFixed(2)) : availMeters;
+              const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+              return {
+                error: `Cannot dispatch ${item.sentQty.toFixed(2)} ${unitSuffix}. Maximum available in lot #${inwardItem.inward.partyChallanNo} (${inwardItem.fabricType} - ${inwardItem.colorShade}) is ${maxInSelectedUnit.toFixed(2)} ${unitSuffix} (≈ ${availMeters.toFixed(2)} m).`,
+              };
+            }
+          }
+        }
+      } else if (item.inwardId) {
+        const inward = await prisma.fabricInward.findUnique({
+          where: { id: item.inwardId },
+        });
+        if (inward) {
+          const inwardEntries = await prisma.fabricLedgerEntry.findMany({
+            where: { inwardId: item.inwardId },
+          });
+          let availMeters = Number(inward.measuredMeters);
+          if (inwardEntries.length > 0) {
+            const c = inwardEntries.reduce((s: number, e: any) => s + Number(e.creditMeters || 0), 0);
+            const d = inwardEntries.reduce((s: number, e: any) => s + Number(e.debitMeters || 0), 0);
+            const sh = inwardEntries.reduce((s: number, e: any) => s + Number(e.shrinkageMeters || 0), 0);
+            availMeters = Math.max(0, Number((c - d - sh).toFixed(2)));
+          }
+
+          const reqMeters = item.unit === "YARDS" ? yardsToMeters(item.sentQty) : item.sentQty;
+          if (reqMeters > availMeters + 0.01) {
+            const maxInSelectedUnit =
+              item.unit === "YARDS" ? Number(metersToYards(availMeters).toFixed(2)) : availMeters;
+            const unitSuffix = item.unit === "YARDS" ? "yd" : "m";
+            return {
+              error: `Cannot dispatch ${item.sentQty.toFixed(2)} ${unitSuffix}. Maximum available in Challan #${inward.partyChallanNo} is ${maxInSelectedUnit.toFixed(2)} ${unitSuffix} (≈ ${availMeters.toFixed(2)} m).`,
+            };
+          }
+        }
+      }
+    }
+
     await prisma.$transaction(async (tx: any) => {
       for (const item of itemsToDispatch) {
         let inwardChallanNo: string | null = null;

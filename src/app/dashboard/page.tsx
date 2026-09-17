@@ -6,7 +6,7 @@ import FabricInwardManager from "@/components/fabric/FabricInwardManager";
 import OutsourceBatchManager from "@/components/fabric/OutsourceBatchManager";
 import DeliveryChallanForm from "@/components/fabric/DeliveryChallanForm";
 import PartyRunningLedger from "@/components/fabric/PartyRunningLedger";
-import { metersToYards } from "@/lib/units";
+import { metersToYards, yardsToMeters } from "@/lib/units";
 import {
   Layers,
   ArrowDownLeft,
@@ -172,18 +172,61 @@ export default async function DashboardPage({
       updatedAt: i.updatedAt,
       party: i.party,
       receivedBy: i.receivedBy,
-      items: (i.items || []).map((it: any) => ({
-        id: it.id,
-        itemIndex: it.itemIndex,
-        fabricType: it.fabricType,
-        colorShade: it.colorShade,
-        unit: it.unit,
-        rollCount: it.rollCount,
-        challanQty: Number(it.challanQty),
-        measuredQty: Number(it.measuredQty),
-        shortageQty: Number(it.shortageQty),
-        standardMeters: it.standardMeters !== null ? Number(it.standardMeters) : null,
-      })),
+      items: (i.items || []).map((it: any) => {
+        const itemEntries = ledgerEntries.filter(
+          (e: any) =>
+            e.inwardItemId === it.id ||
+            ((!e.inwardItemId || e.inwardItemId === it.id) &&
+              (i.items.length === 1 && e.inwardId === i.id))
+        );
+
+        let availableQty = Number(it.measuredQty || 0);
+        let availableMeters: number | null = null;
+
+        if (it.unit === "PIECES") {
+          if (itemEntries.length > 0) {
+            const c = itemEntries.reduce((s: number, e: any) => s + Number(e.creditPieces || 0), 0);
+            const d = itemEntries.reduce((s: number, e: any) => s + Number(e.debitPieces || 0), 0);
+            const sh = itemEntries.reduce((s: number, e: any) => s + Number(e.shortagePieces || 0), 0);
+            availableQty = Math.max(0, c - d - sh);
+          }
+        } else {
+          // CONTINUOUS fabric (METERS or YARDS)
+          if (itemEntries.length > 0) {
+            const c = itemEntries.reduce((s: number, e: any) => s + Number(e.creditMeters || 0), 0);
+            const d = itemEntries.reduce((s: number, e: any) => s + Number(e.debitMeters || 0), 0);
+            const sh = itemEntries.reduce((s: number, e: any) => s + Number(e.shrinkageMeters || 0), 0);
+            availableMeters = Math.max(0, Number((c - d - sh).toFixed(2)));
+          } else {
+            availableMeters =
+              it.standardMeters !== null
+                ? Number(it.standardMeters)
+                : it.unit === "YARDS"
+                ? yardsToMeters(Number(it.measuredQty))
+                : Number(it.measuredQty);
+          }
+          if (it.unit === "YARDS") {
+            availableQty = Number(metersToYards(availableMeters).toFixed(2));
+          } else {
+            availableQty = availableMeters;
+          }
+        }
+
+        return {
+          id: it.id,
+          itemIndex: it.itemIndex,
+          fabricType: it.fabricType,
+          colorShade: it.colorShade,
+          unit: it.unit,
+          rollCount: it.rollCount,
+          challanQty: Number(it.challanQty),
+          measuredQty: Number(it.measuredQty),
+          shortageQty: Number(it.shortageQty),
+          standardMeters: it.standardMeters !== null ? Number(it.standardMeters) : null,
+          availableQty,
+          availableMeters,
+        };
+      }),
     };
   });
 
