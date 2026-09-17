@@ -180,6 +180,26 @@ export async function createPartyInwardAction(
   }
 
   const { challanDate, partyId, partyChallanNo, driverDetails, remarks } = parsedHeader.data;
+  const trimmedChallanNo = partyChallanNo.trim();
+
+  // Enforce unique party challan / bilty # per client party
+  const existingChallan = await prisma.fabricInward.findFirst({
+    where: {
+      partyId,
+      partyChallanNo: {
+        equals: trimmedChallanNo,
+        mode: "insensitive",
+      },
+    },
+    include: { party: true },
+  });
+
+  if (existingChallan) {
+    return {
+      error: `Challan #${trimmedChallanNo} already exists in our database for ${existingChallan.party?.name || "this party"}. Each Party Challan / Bilty # must be unique.`,
+    };
+  }
+
   const dateClaimed = parseLedgerDate(challanDate, 0);
   const dateShortage = parseLedgerDate(challanDate, 1);
   const igpNumber = generateCode("IGP");
@@ -215,7 +235,7 @@ export async function createPartyInwardAction(
         data: {
           igpNumber,
           partyId,
-          partyChallanNo,
+          partyChallanNo: trimmedChallanNo,
           fabricType: primaryFabric,
           colorShade: primaryColor,
           rollCount: totalRolls,
@@ -385,6 +405,7 @@ export async function updateFabricInwardAction(
   }
 
   const { inwardId, challanDate, partyChallanNo, remarks } = parsedHeader.data;
+  const trimmedChallanNo = partyChallanNo.trim();
 
   let itemsToUpdate: Array<z.infer<typeof InwardItemSchema>> = [];
   const itemsPayloadStr = formData.get("itemsPayload") as string | null;
@@ -457,6 +478,25 @@ export async function updateFabricInwardAction(
 
     if (!existing) {
       return { error: "Inward receipt record not found." };
+    }
+
+    // Check duplicate party challan when updating
+    const duplicateChallan = await prisma.fabricInward.findFirst({
+      where: {
+        partyId: existing.partyId,
+        partyChallanNo: {
+          equals: trimmedChallanNo,
+          mode: "insensitive",
+        },
+        id: { not: inwardId },
+      },
+      include: { party: true },
+    });
+
+    if (duplicateChallan) {
+      return {
+        error: `Challan #${trimmedChallanNo} already exists in our database for ${duplicateChallan.party?.name || "this party"}. Each Party Challan / Bilty # must be unique.`,
+      };
     }
 
     const changeParts: string[] = [];

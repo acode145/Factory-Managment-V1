@@ -73,7 +73,7 @@ export default function FabricInwardManager({ parties, inwardList }: FabricInwar
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left 2 Cols: Inward Entry Form */}
           <div className="lg:col-span-2">
-            <FabricInwardForm parties={parties} />
+            <FabricInwardForm parties={parties} existingInwards={inwardList} />
           </div>
 
           {/* Right 1 Col: Recent Receipts Card (Max 3 items with full information) */}

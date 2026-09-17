@@ -21,6 +21,11 @@ interface PartyOption {
   code: string;
 }
 
+interface InwardReferenceOption {
+  partyId: string;
+  partyChallanNo: string;
+}
+
 export interface InwardRowState {
   id: string;
   fabricType: string;
@@ -31,13 +36,21 @@ export interface InwardRowState {
   measuredQty: string;
 }
 
-export default function FabricInwardForm({ parties }: { parties: PartyOption[] }) {
+export default function FabricInwardForm({
+  parties,
+  existingInwards = [],
+}: {
+  parties: PartyOption[];
+  existingInwards?: InwardReferenceOption[];
+}) {
   const [state, formAction, isPending] = useActionState<FabricActionState, FormData>(
     createPartyInwardAction,
     {}
   );
 
   const [formKey, setFormKey] = useState(0);
+  const [selectedPartyId, setSelectedPartyId] = useState("");
+  const [partyChallanNo, setPartyChallanNo] = useState("");
 
   useEffect(() => {
     if (state?.success) {
@@ -52,6 +65,8 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
           measuredQty: '',
         },
       ]);
+      setSelectedPartyId("");
+      setPartyChallanNo("");
       setFormKey((k) => k + 1);
     }
   }, [state]);
@@ -122,6 +137,44 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
   const contShortageM = Number(Math.max(0, totalContClaimedM - totalContMeasuredM).toFixed(2));
   const piecesShortage = Math.max(0, totalPiecesClaimed - totalPiecesMeasured);
 
+  // Real-time client duplicate check
+  const trimmedChallan = partyChallanNo.trim().toUpperCase();
+  const isDuplicateChallan = Boolean(
+    selectedPartyId &&
+    trimmedChallan &&
+    existingInwards.some(
+      (inv) =>
+        inv.partyId === selectedPartyId &&
+        inv.partyChallanNo.trim().toUpperCase() === trimmedChallan
+    )
+  );
+  const selectedParty = parties.find((p) => p.id === selectedPartyId);
+
+  // Strict completeness verification across all added item rows
+  const isRowsValid =
+    rows.length > 0 &&
+    rows.every((r) => {
+      const cQty = parseFloat(r.challanQty);
+      const mQty = parseFloat(r.measuredQty);
+      const rolls = parseInt(r.rollCount, 10);
+      return (
+        r.fabricType.trim().length > 0 &&
+        r.colorShade.trim().length > 0 &&
+        !isNaN(rolls) &&
+        rolls > 0 &&
+        !isNaN(cQty) &&
+        cQty > 0 &&
+        !isNaN(mQty) &&
+        mQty > 0
+      );
+    });
+
+  const isFormValid =
+    Boolean(selectedPartyId) &&
+    Boolean(partyChallanNo.trim()) &&
+    !isDuplicateChallan &&
+    isRowsValid;
+
   return (
     <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs space-y-6">
       {/* Header */}
@@ -170,11 +223,13 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
             {/* 2. Client Party / Mill (Moved second per requirement 5) */}
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-                Client Party / Mill
+                Client Party / Mill *
               </label>
               <select
                 name="partyId"
                 required
+                value={selectedPartyId}
+                onChange={(e) => setSelectedPartyId(e.target.value)}
                 className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               >
                 <option value="">-- Select Party / Brand --</option>
@@ -188,16 +243,37 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
 
             {/* 3. Party Challan / Bilty # */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1.5">
-                Party Challan / Bilty #
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                  Party Challan / Bilty # *
+                </label>
+                {isDuplicateChallan && (
+                  <span className="text-[10px] font-mono font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                    Already Exists
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 name="partyChallanNo"
                 required
+                value={partyChallanNo}
+                onChange={(e) => setPartyChallanNo(e.target.value)}
                 placeholder="e.g. CH-8901"
-                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                className={`w-full h-11 px-3 bg-white border rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                  isDuplicateChallan
+                    ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20 text-rose-950"
+                    : "border-zinc-300 focus:ring-zinc-900"
+                }`}
               />
+              {isDuplicateChallan && (
+                <p className="mt-1 text-[11px] text-rose-600 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Challan #{partyChallanNo.trim()} already exists for {selectedParty?.name || "this party"}. Must be unique.
+                  </span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -496,8 +572,12 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
         <div className="pt-2">
           <button
             type="submit"
-            disabled={isPending}
-            className="w-full h-12 bg-zinc-950 hover:bg-zinc-800 text-white rounded-lg text-sm font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            disabled={!isFormValid || isPending}
+            className={`w-full h-12 rounded-lg text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-2 ${
+              !isFormValid || isPending
+                ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
+                : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer"
+            }`}
           >
             {isPending ? (
               <span className="flex items-center gap-2">
@@ -506,11 +586,22 @@ export default function FabricInwardForm({ parties }: { parties: PartyOption[] }
               </span>
             ) : (
               <>
-                <ArrowDownLeft className="w-4 h-4 text-emerald-400" />
+                <ArrowDownLeft className={`w-4 h-4 ${!isFormValid ? "text-zinc-400" : "text-emerald-400"}`} />
                 <span>Save & Generate Inward Gate Pass ({rows.length} Items)</span>
               </>
             )}
           </button>
+          {!isFormValid && (
+            <p className="text-[11px] text-zinc-500 text-center mt-1.5 font-mono">
+              {!selectedPartyId
+                ? "Select Client Party / Mill to proceed"
+                : !partyChallanNo.trim()
+                ? "Enter Party Challan / Bilty # to proceed"
+                : isDuplicateChallan
+                ? `Challan #${partyChallanNo.trim()} is already registered for this party`
+                : "Fill fabric specification, color shade, roll count, and quantities in all item rows"}
+            </p>
+          )}
         </div>
       </form>
     </div>
