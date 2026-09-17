@@ -629,7 +629,7 @@ export async function updateFabricInwardAction(
 // -----------------------------------------------------------------------------
 const OutsourceItemSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
-  inwardId: z.string().optional(),
+  inwardId: z.string().min(1, "Inward Challan is required"),
   inwardItemId: z.string().optional(),
   unit: z.enum(["METERS", "YARDS", "PIECES"]).default("METERS"),
   processType: z.string().default("SOLID_DYEING"),
@@ -749,6 +749,18 @@ export async function createOutsourceDispatchAction(
 
     // Validate individual lot & line-item available balances
     for (const item of itemsToDispatch) {
+      if (item.inwardId && !item.inwardItemId) {
+        const inward = await prisma.fabricInward.findUnique({
+          where: { id: item.inwardId },
+          include: { items: true },
+        });
+        if (inward && inward.items && inward.items.length > 1) {
+          return {
+            error: `Challan #${inward.partyChallanNo} has multiple lots. Please select the specific lot / line item to dispatch.`,
+          };
+        }
+      }
+
       if (item.inwardItemId) {
         const inwardItem = await prisma.fabricInwardItem.findUnique({
           where: { id: item.inwardItemId },

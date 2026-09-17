@@ -380,6 +380,36 @@ export default function OutsourceBatchManager({
     }
   }
 
+  // Check whether every individual lot row is fully selected and valid
+  const isRowComplete = (row: LotRow) => {
+    if (!row.partyId) return false;
+    if (!row.inwardId) return false; // Challan must be selected (no general stock)
+
+    const matchingInward = inwards.find((i) => i.id === row.inwardId);
+    if (matchingInward && matchingInward.items && matchingInward.items.length > 1) {
+      if (!row.inwardItemId) return false; // Multi-lot challans require selecting the specific lot
+    }
+
+    if (!row.processType) return false;
+    if (!row.targetShade || !row.targetShade.trim()) return false;
+    if (!row.unit) return false;
+
+    const qty = parseFloat(row.sentQty);
+    if (!qty || isNaN(qty) || qty <= 0) return false;
+
+    return true;
+  };
+
+  const allRowsComplete =
+    lotRows.length > 0 && lotRows.every((row) => isRowComplete(row));
+
+  const isFormReadyToDispatch =
+    Boolean(vendorId) &&
+    allRowsComplete &&
+    !hasOverbalanceError &&
+    (totalContinuousMeters > 0 || totalPieces > 0) &&
+    !isDispatching;
+
   // Active Return Batch Calculations
   const isReturnPieces =
     activeReturnBatch?.itemCategory === "PIECES" || activeReturnBatch?.unit === "PIECES";
@@ -519,7 +549,11 @@ export default function OutsourceBatchManager({
                 required
                 value={vendorId}
                 onChange={(e) => setVendorId(e.target.value)}
-                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                className={`w-full h-11 px-3 bg-white border rounded-md text-sm text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                  !vendorId
+                    ? "border-amber-400 bg-amber-50/10 focus:ring-amber-500"
+                    : "border-zinc-300 focus:ring-zinc-900"
+                }`}
               >
                 <option value="">-- Select Dyer / Printer --</option>
                 {vendors.map((v) => (
@@ -682,14 +716,19 @@ export default function OutsourceBatchManager({
                       {/* Party Inward Challan & Item */}
                       <div>
                         <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                          Inward Challan / Lot #
+                          Inward Challan / Lot # *
                         </label>
                         <select
+                          required
                           value={row.inwardId}
                           onChange={(e) => updateLotRow(index, "inwardId", e.target.value)}
-                          className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 font-mono"
+                          className={`w-full h-10 px-2.5 bg-white border rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 font-mono ${
+                            !row.inwardId
+                              ? "border-amber-400 bg-amber-50/20 text-zinc-600 focus:ring-amber-500"
+                              : "border-zinc-300 focus:ring-zinc-900"
+                          }`}
                         >
-                          <option value="">-- General Stock / Challan --</option>
+                          <option value="">-- Select Inward Challan * --</option>
                           {partyInwards.map((i) => (
                             <option key={i.id} value={i.id}>
                               #{i.partyChallanNo} ({i.fabricType})
@@ -697,18 +736,28 @@ export default function OutsourceBatchManager({
                           ))}
                         </select>
                         {selectedInward && selectedInward.items && selectedInward.items.length > 1 && (
-                          <select
-                            value={row.inwardItemId}
-                            onChange={(e) => updateLotRow(index, "inwardItemId", e.target.value)}
-                            className="w-full h-8 px-2 bg-zinc-50 border border-zinc-200 rounded text-[11px] text-zinc-800 font-mono mt-1.5 focus:outline-hidden"
-                          >
-                            <option value="">-- Select Specific Line Item --</option>
-                            {selectedInward.items.map((it) => (
-                              <option key={it.id} value={it.id}>
-                                #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — {it.measuredQty} {it.unit === "PIECES" ? "pcs" : it.unit === "YARDS" ? "yd" : "m"}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="mt-1.5">
+                            <label className="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">
+                              Specific Lot / Item *
+                            </label>
+                            <select
+                              required
+                              value={row.inwardItemId}
+                              onChange={(e) => updateLotRow(index, "inwardItemId", e.target.value)}
+                              className={`w-full h-8 px-2 bg-zinc-50 border rounded text-[11px] font-mono focus:outline-hidden ${
+                                !row.inwardItemId
+                                  ? "border-amber-400 bg-amber-50/40 text-amber-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                                  : "border-zinc-200 text-zinc-800"
+                              }`}
+                            >
+                              <option value="">-- Select Specific Lot Item * --</option>
+                              {selectedInward.items.map((it) => (
+                                <option key={it.id} value={it.id}>
+                                  Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — {it.measuredQty} {it.unit === "PIECES" ? "pcs" : it.unit === "YARDS" ? "yd" : "m"}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         )}
                         {lotAvailableBadge && (
                           <span className="text-[10px] text-zinc-600 font-mono block mt-1 bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded truncate">
@@ -745,7 +794,11 @@ export default function OutsourceBatchManager({
                           value={row.targetShade}
                           onChange={(e) => updateLotRow(index, "targetShade", e.target.value)}
                           placeholder="e.g. Jet Black #01"
-                          className="w-full h-10 px-2.5 bg-white border border-zinc-300 rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                          className={`w-full h-10 px-2.5 bg-white border rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                            !row.targetShade.trim()
+                              ? "border-amber-400 focus:ring-amber-500 bg-amber-50/10"
+                              : "border-zinc-300 focus:ring-zinc-900"
+                          }`}
                         />
                       </div>
 
@@ -804,6 +857,8 @@ export default function OutsourceBatchManager({
                           className={`w-full h-10 px-2.5 bg-white border rounded-md text-xs font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 ${
                             isRowInvalid
                               ? "border-rose-400 bg-rose-50/30 focus:ring-rose-500 text-rose-950 font-semibold"
+                              : !parsedQty || parsedQty <= 0
+                              ? "border-amber-400 focus:ring-amber-500 bg-amber-50/10"
                               : "border-zinc-300 focus:ring-zinc-900"
                           }`}
                         />
@@ -865,24 +920,35 @@ export default function OutsourceBatchManager({
           </div>
 
           <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-zinc-100">
-            <div className="text-xs text-zinc-500 font-mono">
-              Total to Dispatch:{" "}
-              <strong className="text-zinc-900">
-                {totalContinuousMeters > 0 && `${totalContinuousMeters.toFixed(2)}m (≈ ${totalContinuousYards.toFixed(1)} yd)`}
-                {totalContinuousMeters > 0 && totalPieces > 0 && " + "}
-                {totalPieces > 0 && `${totalPieces.toLocaleString()} pcs`}
-                {totalContinuousMeters === 0 && totalPieces === 0 && "0"}
-              </strong>
+            <div className="space-y-0.5">
+              <div className="text-xs text-zinc-500 font-mono">
+                Total to Dispatch:{" "}
+                <strong className="text-zinc-900">
+                  {totalContinuousMeters > 0 && `${totalContinuousMeters.toFixed(2)}m (≈ ${totalContinuousYards.toFixed(1)} yd)`}
+                  {totalContinuousMeters > 0 && totalPieces > 0 && " + "}
+                  {totalPieces > 0 && `${totalPieces.toLocaleString()} pcs`}
+                  {totalContinuousMeters === 0 && totalPieces === 0 && "0"}
+                </strong>
+              </div>
+              {!isFormReadyToDispatch && !isDispatching && (
+                <div className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                  <span>
+                    {!vendorId
+                      ? "Please select Dyer / Printer vendor."
+                      : !allRowsComplete
+                      ? "All rows must have Challan, Lot, Color & Sent Qty filled."
+                      : hasOverbalanceError
+                      ? "Dispatched quantity exceeds available custody/lot balance."
+                      : "Enter valid dispatch quantity to activate button."}
+                  </span>
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              disabled={
-                isDispatching ||
-                hasOverbalanceError ||
-                !vendorId ||
-                (totalContinuousMeters <= 0 && totalPieces <= 0)
-              }
+              disabled={!isFormReadyToDispatch}
               className="h-11 px-6 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-md text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isDispatching ? (
