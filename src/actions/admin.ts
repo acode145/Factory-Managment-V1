@@ -14,7 +14,13 @@ const CreateUserSchema = z.object({
     .min(3, "Username must be at least 3 characters")
     .regex(/^[a-z0-9_]+$/, "Username can only contain lowercase letters, numbers, and underscores"),
   password: z.string().min(4, "Password/PIN must be at least 4 characters"),
-  role: z.enum(["ADMIN", "STOREKEEPER", "FLOOR_SUPERVISOR", "GATE_CLERK"]),
+  role: z.enum([
+    "ADMIN",
+    "STOREKEEPER",
+    "FLOOR_SUPERVISOR",
+    "GATE_CLERK",
+    "FABRIC_PROCESSING_INCHARGE",
+  ]),
 });
 
 export type AdminActionState = {

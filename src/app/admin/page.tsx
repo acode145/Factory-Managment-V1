@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Header from "@/components/Header";
 import UserManagement from "@/components/admin/UserManagement";
 import { Users, Building2, Truck, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 
 export default async function AdminPage() {
   const session = await getSession();
@@ -65,13 +66,16 @@ export default async function AdminPage() {
               </div>
             </div>
 
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            <Link
+              href="/dashboard?tab=parties"
+              className="bg-white hover:bg-zinc-50 border border-zinc-200 hover:border-zinc-300 rounded-lg p-3.5 shadow-xs transition-all block group cursor-pointer"
+            >
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>Client Parties</span>
-                <Building2 className="w-4 h-4 text-zinc-400" />
+                <Building2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
               </div>
               <div className="mt-1 text-xl font-bold font-mono text-zinc-950">{partiesCount}</div>
-            </div>
+            </Link>
 
             <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">

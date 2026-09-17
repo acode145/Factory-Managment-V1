@@ -14,6 +14,23 @@ interface UserItem {
   createdAt: Date;
 }
 
+function getRoleBadge(role: string) {
+  switch (role) {
+    case "ADMIN":
+      return "bg-zinc-900 text-white";
+    case "FABRIC_PROCESSING_INCHARGE":
+      return "bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold";
+    case "STOREKEEPER":
+      return "bg-emerald-50 text-emerald-700 border border-emerald-200";
+    case "FLOOR_SUPERVISOR":
+      return "bg-amber-50 text-amber-800 border border-amber-200";
+    case "GATE_CLERK":
+      return "bg-sky-50 text-sky-700 border border-sky-200";
+    default:
+      return "bg-zinc-100 text-zinc-700 border border-zinc-200";
+  }
+}
+
 export default function UserManagement({
   initialUsers,
   currentAdminId,
@@ -140,6 +157,7 @@ export default function UserManagement({
                 <option value="STOREKEEPER">STOREKEEPER (Store & In/Out)</option>
                 <option value="FLOOR_SUPERVISOR">FLOOR_SUPERVISOR (Production)</option>
                 <option value="GATE_CLERK">GATE_CLERK (Gate Receiving)</option>
+                <option value="FABRIC_PROCESSING_INCHARGE">FABRIC_PROCESSING_INCHARGE (Fabric & Party Incharge)</option>
                 <option value="ADMIN">ADMIN (Full Super Access)</option>
               </select>
             </div>
@@ -204,8 +222,10 @@ export default function UserManagement({
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-b border-zinc-100 py-2">
                     <div>
-                      <span className="text-zinc-400 block text-[10px] uppercase font-mono">Role</span>
-                      <span className="font-semibold text-zinc-800">{user.role}</span>
+                      <span className="text-zinc-400 block text-[10px] uppercase font-mono mb-0.5">Role</span>
+                      <span className={`inline-block text-[11px] font-mono px-2 py-0.5 rounded ${getRoleBadge(user.role)}`}>
+                        {user.role}
+                      </span>
                     </div>
                     <div>
                       <span className="text-zinc-400 block text-[10px] uppercase font-mono">Password / PIN</span>
@@ -297,7 +317,7 @@ export default function UserManagement({
                       <td className="py-2.5 px-3 font-semibold text-zinc-900">{user.fullName}</td>
                       <td className="py-2.5 px-3 font-mono text-zinc-600">@{user.username}</td>
                       <td className="py-2.5 px-3">
-                        <span className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-zinc-700 bg-zinc-100 px-2 py-0.5 rounded">
+                        <span className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded ${getRoleBadge(user.role)}`}>
                           {user.role}
                         </span>
                       </td>

@@ -7,7 +7,7 @@ const SECRET_KEY = process.env.SESSION_SECRET || "fallback-factory-management-se
 export interface SessionData {
   userId: string;
   username: string;
-  role: "ADMIN" | "STOREKEEPER" | "FLOOR_SUPERVISOR" | "GATE_CLERK";
+  role: "ADMIN" | "STOREKEEPER" | "FLOOR_SUPERVISOR" | "GATE_CLERK" | "FABRIC_PROCESSING_INCHARGE";
   fullName: string;
   createdAt: number;
 }

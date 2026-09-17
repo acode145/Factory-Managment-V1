@@ -6,6 +6,8 @@ import FabricInwardManager from "@/components/fabric/FabricInwardManager";
 import OutsourceBatchManager from "@/components/fabric/OutsourceBatchManager";
 import DeliveryChallanForm from "@/components/fabric/DeliveryChallanForm";
 import PartyRunningLedger from "@/components/fabric/PartyRunningLedger";
+import PartyManagement from "@/components/fabric/PartyManagement";
+import { getNextPartyCode } from "@/actions/party";
 import { metersToYards, yardsToMeters } from "@/lib/units";
 import {
   Layers,
@@ -35,8 +37,18 @@ export default async function DashboardPage({
   const [parties, vendors, rawInwardList, rawBatches, rawLedgerEntries] = await Promise.all([
     prisma.party.findMany({
       where: { isActive: true },
-      select: { id: true, name: true, code: true, partyType: true },
-      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        partyType: true,
+        contactPerson: true,
+        phone: true,
+        address: true,
+        isActive: true,
+        createdAt: true,
+      },
+      orderBy: { code: "asc" },
     }),
     prisma.vendor.findMany({
       where: { isActive: true },
@@ -86,6 +98,10 @@ export default async function DashboardPage({
       },
     }),
   ]);
+
+  const nextPartyCode = await getNextPartyCode();
+  const canCreateParty =
+    session.role === "ADMIN" || session.role === "FABRIC_PROCESSING_INCHARGE";
 
   // Serialize Prisma Decimals into plain JavaScript numbers to prevent Client Component serialization errors
   const batches = rawBatches.map((b: any) => ({
@@ -351,15 +367,18 @@ export default async function DashboardPage({
               </div>
             </div>
 
-            {/* Card 4: Registered Parties */}
-            <div className="bg-white border border-zinc-200 rounded-xl p-3.5 shadow-xs space-y-1">
+            {/* Card 4: Registered Parties (Clickable tab link) */}
+            <Link
+              href="/dashboard?tab=parties"
+              className="bg-white hover:bg-zinc-50 border border-zinc-200 hover:border-zinc-300 rounded-xl p-3.5 shadow-xs space-y-1 transition-all block group cursor-pointer"
+            >
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
                 <span>Registered Parties</span>
-                <Building2 className="w-4 h-4 text-zinc-400" />
+                <Building2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
               </div>
               <div className="text-xl font-bold font-mono text-zinc-950">{parties.length}</div>
-              <span className="text-[10px] text-zinc-400 font-mono block">Active client accounts</span>
-            </div>
+              <span className="text-[10px] text-zinc-400 font-mono block">Active client accounts →</span>
+            </Link>
           </div>
         </div>
 
@@ -412,6 +431,18 @@ export default async function DashboardPage({
             <BookOpen className="w-3.5 h-3.5" />
             <span>Party Running Ledger</span>
           </Link>
+
+          <Link
+            href="/dashboard?tab=parties"
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
+              tab === "parties"
+                ? "bg-zinc-900 text-white shadow-xs"
+                : "bg-white text-zinc-600 hover:text-zinc-950 border border-zinc-200"
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>Client Parties</span>
+          </Link>
         </div>
 
         {/* Tab View Content */}
@@ -437,6 +468,14 @@ export default async function DashboardPage({
             parties={partyBalances}
             entries={ledgerEntries}
             inwards={inwardList}
+          />
+        )}
+
+        {tab === "parties" && (
+          <PartyManagement
+            parties={parties}
+            canCreateParty={canCreateParty}
+            nextPartyCode={nextPartyCode}
           />
         )}
       </main>
