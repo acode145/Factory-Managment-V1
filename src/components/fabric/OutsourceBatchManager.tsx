@@ -447,13 +447,16 @@ export default function OutsourceBatchManager({
   const accountedQtyNum = parseFloat(accountedQtyInput) || 0;
   const receivedQtyNum = parseFloat(receivedQtyInput) || 0;
 
+  const isReceivedOverAccounted =
+    Boolean(accountedQtyNum > 0 && receivedQtyNum > accountedQtyNum + 0.001);
+
   const calculatedShrinkage =
-    accountedQtyNum > 0 && receivedQtyNum > 0
+    accountedQtyNum > 0 && receivedQtyNum > 0 && !isReceivedOverAccounted
       ? Number((accountedQtyNum - receivedQtyNum).toFixed(2))
       : 0;
 
   const calculatedPercent =
-    accountedQtyNum > 0 && receivedQtyNum > 0
+    accountedQtyNum > 0 && receivedQtyNum > 0 && !isReceivedOverAccounted
       ? Number(((calculatedShrinkage / accountedQtyNum) * 100).toFixed(2))
       : 0;
 
@@ -761,7 +764,8 @@ export default function OutsourceBatchManager({
                         )}
                         {lotAvailableBadge && (
                           <span className="text-[10px] text-zinc-600 font-mono block mt-1 bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded truncate">
-                            📦 Lot Avail: <strong className="text-zinc-900">{lotAvailableBadge}</strong>
+                            <Boxes className="w-3.5 h-3.5 inline mr-1 text-zinc-500" />
+                            Lot Avail: <strong className="text-zinc-900">{lotAvailableBadge}</strong>
                           </span>
                         )}
                       </div>
@@ -1410,6 +1414,7 @@ export default function OutsourceBatchManager({
                       required
                       disabled={!isReturnPieces && !returnUnit}
                       min={isReturnPieces ? "1" : "0.01"}
+                      max={accountedQtyNum > 0 ? accountedQtyNum : (pendingQtyNum > 0 ? pendingQtyNum : undefined)}
                       inputMode="decimal"
                       value={receivedQtyInput}
                       onChange={(e) => setReceivedQtyInput(e.target.value)}
@@ -1420,7 +1425,11 @@ export default function OutsourceBatchManager({
                           ? "e.g. 495"
                           : `e.g. ${returnUnit === "YARDS" ? "2150.00" : "2000.00"}`
                       }
-                      className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
+                      className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-400 ${
+                        isReceivedOverAccounted
+                          ? "border-rose-400 bg-rose-50/20 text-rose-950 font-semibold focus:ring-rose-500"
+                          : "border-zinc-300 focus:ring-zinc-900"
+                      }`}
                     />
                   </div>
 
@@ -1434,9 +1443,24 @@ export default function OutsourceBatchManager({
                       : "—"}
                   </div>
                 </div>
+
+                {isReceivedOverAccounted && (
+                  <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 p-2.5 rounded-md flex items-start gap-2 font-medium mt-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                    <span>
+                      Physical received quantity ({receivedQtyNum} {returnUnitLabel}) cannot exceed dispatched lot quantity accounted ({accountedQtyNum} {returnUnitLabel}). Fabric shrinks or remains equal; it cannot increase in quantity.
+                    </span>
+                  </div>
+                )}
+
+                {accountedQtyNum > 0 && !isReceivedOverAccounted && (
+                  <span className="text-[11px] text-zinc-500 block mt-1">
+                    Max allowed: {isReturnPieces ? Math.round(accountedQtyNum) : accountedQtyNum.toFixed(2)} {returnUnitLabel} (must be equal to or less than accounted quantity).
+                  </span>
+                )}
               </div>
 
-              {receivedQtyNum > 0 && (isReturnPieces || returnUnit) && (
+              {!isReceivedOverAccounted && receivedQtyNum > 0 && (isReturnPieces || returnUnit) && (
                 <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-md text-xs space-y-1.5">
                   <div className="flex justify-between font-mono">
                     <span className="text-rose-800 font-medium">
@@ -1486,6 +1510,7 @@ export default function OutsourceBatchManager({
                     isReturning ||
                     (!isReturnPieces && !returnUnit) ||
                     isOverPendingError ||
+                    isReceivedOverAccounted ||
                     receivedQtyNum <= 0 ||
                     accountedQtyNum <= 0
                   }

@@ -1041,6 +1041,12 @@ export async function returnOutsourceBatchAction(
       };
     }
 
+    if (receivedQty > accountedQty + 0.001) {
+      return {
+        error: `Physical received quantity (${receivedQty} ${unitLabel}) cannot exceed dispatched lot quantity accounted (${accountedQty} ${unitLabel}). Fabric shrinks during processing; it cannot increase in quantity.`,
+      };
+    }
+
     const shrinkageQty = Number((accountedQty - receivedQty).toFixed(2));
     const shrinkagePercent =
       accountedQty > 0 ? Number(((shrinkageQty / accountedQty) * 100).toFixed(2)) : 0;
