@@ -860,7 +860,7 @@ export async function createOutsourceDispatchAction(
             itemCategory: isPieces ? "PIECES" : "CONTINUOUS",
             processType: item.processType,
             targetShade: item.targetShade,
-            sentMeters: stdQty,
+            sentMeters: item.sentQty,
             sentDate: dateDispatch,
             sentById: session.userId,
             status: "WITH_VENDOR",

@@ -942,11 +942,15 @@ export default function OutsourceBatchManager({
                         <span className="text-sm font-bold text-zinc-950">
                           {isBatchPieces
                             ? `${Math.round(pending).toLocaleString()} pcs`
-                            : `${pending.toFixed(2)}m`}
+                            : batch.unit === "YARDS"
+                            ? `${pending.toFixed(2)} yd`
+                            : `${pending.toFixed(2)} m`}
                         </span>
                         {!isBatchPieces && (
                           <span className="text-[10px] text-zinc-500 block">
-                            ≈ {metersToYards(pending).toFixed(1)} yd
+                            {batch.unit === "YARDS"
+                              ? `≈ ${yardsToMeters(pending).toFixed(1)} m`
+                              : `≈ ${metersToYards(pending).toFixed(1)} yd`}
                           </span>
                         )}
                       </div>
@@ -1038,7 +1042,9 @@ export default function OutsourceBatchManager({
                       <div className="text-right font-mono font-bold text-zinc-900">
                         {isBatchPieces
                           ? `${Math.round(Number(batch.receivedMeters || 0))} pcs received`
-                          : `${Number(batch.receivedMeters || 0).toFixed(2)}m received`}
+                          : batch.unit === "YARDS"
+                          ? `${Number(batch.receivedMeters || 0).toFixed(2)} yd received`
+                          : `${Number(batch.receivedMeters || 0).toFixed(2)} m received`}
                       </div>
                     </div>
 
@@ -1050,7 +1056,11 @@ export default function OutsourceBatchManager({
                         Loss: -
                         {isBatchPieces
                           ? `${Math.round(Number(batch.shrinkageMeters || 0))} pcs`
-                          : `${Number(batch.shrinkageMeters || 0).toFixed(2)}m (${Number(
+                          : batch.unit === "YARDS"
+                          ? `${Number(batch.shrinkageMeters || 0).toFixed(2)} yd (${Number(
+                              batch.shrinkagePercent || 0
+                            ).toFixed(2)}%)`
+                          : `${Number(batch.shrinkageMeters || 0).toFixed(2)} m (${Number(
                               batch.shrinkagePercent || 0
                             ).toFixed(2)}%)`}
                       </span>
@@ -1112,7 +1122,16 @@ export default function OutsourceBatchManager({
               <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Total Dispatched Lot:</span>
                 <span className="font-bold text-zinc-900">
-                  {isReturnPieces ? `${Math.round(sentQtyNum)} pcs` : `${sentQtyNum.toFixed(2)}${returnUnitLabel}`}
+                  {isReturnPieces
+                    ? `${Math.round(sentQtyNum)} pcs`
+                    : `${sentQtyNum.toFixed(2)} ${returnUnitLabel}`}
+                  {!isReturnPieces && (
+                    <span className="text-zinc-500 font-normal text-[11px] ml-1">
+                      {returnUnitLabel === "yd"
+                        ? `(≈ ${yardsToMeters(sentQtyNum).toFixed(2)} m)`
+                        : `(≈ ${metersToYards(sentQtyNum).toFixed(2)} yd)`}
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -1120,7 +1139,7 @@ export default function OutsourceBatchManager({
                 <span className="text-zinc-700">
                   {isReturnPieces
                     ? `${Math.round(prevAccountedNum)} pcs`
-                    : `${prevAccountedNum.toFixed(2)}${returnUnitLabel}`}
+                    : `${prevAccountedNum.toFixed(2)} ${returnUnitLabel}`}
                 </span>
               </div>
               <div className="flex justify-between pt-1 border-t border-zinc-200 font-bold">
@@ -1128,7 +1147,14 @@ export default function OutsourceBatchManager({
                 <span className="text-amber-900">
                   {isReturnPieces
                     ? `${Math.round(pendingQtyNum)} pcs`
-                    : `${pendingQtyNum.toFixed(2)}${returnUnitLabel}`}
+                    : `${pendingQtyNum.toFixed(2)} ${returnUnitLabel}`}
+                  {!isReturnPieces && (
+                    <span className="text-amber-700/80 font-normal text-[11px] ml-1">
+                      {returnUnitLabel === "yd"
+                        ? `(≈ ${yardsToMeters(pendingQtyNum).toFixed(2)} m)`
+                        : `(≈ ${metersToYards(pendingQtyNum).toFixed(2)} yd)`}
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
