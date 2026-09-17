@@ -1235,62 +1235,13 @@ export default function OutsourceBatchManager({
                 </div>
               </div>
 
-              {/* Dyer Delivery Slip Measurement Unit */}
-              {!isReturnPieces ? (
-                <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold text-amber-950 uppercase tracking-wider">
-                      Dyer Slip Measurement Unit *
-                    </label>
-                    <span className="text-[11px] font-mono text-amber-800">
-                      Dispatched in: <strong className="uppercase">{batchUnitLabel}</strong>
-                    </span>
-                  </div>
-                  <select
-                    name="returnUnit"
-                    required
-                    value={returnUnit}
-                    onChange={(e) =>
-                      handleReturnUnitChange(e.target.value as "" | "METERS" | "YARDS")
-                    }
-                    className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-semibold focus:outline-hidden focus:ring-2 ${
-                      !returnUnit
-                        ? "border-amber-400 bg-amber-50 text-amber-900 focus:ring-amber-500"
-                        : "border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-                    }`}
-                  >
-                    <option value="">-- Please Select Slip Unit (M or Yd) --</option>
-                    <option value="METERS">M (Meters) — Receiving physical slip in meters</option>
-                    <option value="YARDS">Yd (Yards) — Receiving physical slip in yards</option>
-                  </select>
-                  {!returnUnit ? (
-                    <p className="text-[11px] text-amber-800 font-medium">
-                      ⚠️ Please select whether the Dyer's delivery challan is in Meters (M) or Yards (Yd) to proceed.
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-emerald-800 font-medium">
-                      ✓ Active slip unit:{" "}
-                      <strong className="uppercase font-bold">
-                        {returnUnit === "YARDS" ? "Yards (yd)" : "Meters (m)"}
-                      </strong>
-                      {returnUnit !== activeReturnBatch.unit && (
-                        <span className="ml-1 text-zinc-600 font-normal">
-                          (System will auto-reconcile with {batchUnitLabel} dispatched)
-                        </span>
-                      )}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <input type="hidden" name="returnUnit" value="PIECES" />
-              )}
-
+              {/* Accounted Quantity + Unit Dropdown (Side-by-Side) */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
                     {isReturnPieces
                       ? "Dispatched Lot Pieces Accounted *"
-                      : `Dispatched Lot Quantity Accounted ${returnUnitLabel ? `(${returnUnitLabel})` : ""} *`}
+                      : "Dispatched Lot Quantity Accounted *"}
                   </label>
                   {(!isReturnPieces ? returnUnit : true) && (
                     <span className="text-[11px] font-mono text-zinc-500">
@@ -1301,31 +1252,64 @@ export default function OutsourceBatchManager({
                     </span>
                   )}
                 </div>
-                <input
-                  type="number"
-                  step={isReturnPieces ? "1" : "0.01"}
-                  name="accountedQty"
-                  required
-                  disabled={!isReturnPieces && !returnUnit}
-                  min={isReturnPieces ? "1" : "0.01"}
-                  max={pendingQtyNum > 0 ? pendingQtyNum : undefined}
-                  inputMode="decimal"
-                  value={accountedQtyInput}
-                  onChange={(e) => setAccountedQtyInput(e.target.value)}
-                  placeholder={
-                    !isReturnPieces && !returnUnit
-                      ? "Select Slip Unit (M or Yd) first"
-                      : undefined
-                  }
-                  className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-400 ${
-                    isOverPendingError
-                      ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20"
-                      : "border-zinc-300 focus:ring-zinc-900"
-                  }`}
-                />
+
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      step={isReturnPieces ? "1" : "0.01"}
+                      name="accountedQty"
+                      required
+                      disabled={!isReturnPieces && !returnUnit}
+                      min={isReturnPieces ? "1" : "0.01"}
+                      max={pendingQtyNum > 0 ? pendingQtyNum : undefined}
+                      inputMode="decimal"
+                      value={accountedQtyInput}
+                      onChange={(e) => setAccountedQtyInput(e.target.value)}
+                      placeholder={
+                        !isReturnPieces && !returnUnit
+                          ? "Select unit first →"
+                          : undefined
+                      }
+                      className={`w-full h-11 px-3 bg-white border rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-400 ${
+                        isOverPendingError
+                          ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20"
+                          : "border-zinc-300 focus:ring-zinc-900"
+                      }`}
+                    />
+                  </div>
+
+                  <div className="w-32 sm:w-36 shrink-0">
+                    {isReturnPieces ? (
+                      <div className="w-full h-11 px-3 bg-zinc-100 border border-zinc-300 rounded-md text-sm font-medium flex items-center justify-center text-zinc-700 font-mono">
+                        <span>Pcs</span>
+                        <input type="hidden" name="returnUnit" value="PIECES" />
+                      </div>
+                    ) : (
+                      <select
+                        name="returnUnit"
+                        required
+                        value={returnUnit}
+                        onChange={(e) =>
+                          handleReturnUnitChange(e.target.value as "" | "METERS" | "YARDS")
+                        }
+                        className={`w-full h-11 px-2.5 bg-white border rounded-md text-sm font-medium focus:outline-hidden focus:ring-2 cursor-pointer ${
+                          !returnUnit
+                            ? "border-amber-400 text-amber-900 bg-amber-50/40 focus:ring-amber-500"
+                            : "border-zinc-300 text-zinc-900 focus:ring-zinc-900"
+                        }`}
+                      >
+                        <option value="">-- Unit --</option>
+                        <option value="METERS">Meters</option>
+                        <option value="YARDS">Yards</option>
+                      </select>
+                    )}
+                  </div>
+                </div>
+
                 <span className="text-[11px] text-zinc-500 block mt-1">
                   {!isReturnPieces && !returnUnit
-                    ? "Select measurement unit above to calculate max pending quantity."
+                    ? "Select Meters or Yards to calculate max pending quantity."
                     : `Leave at ${
                         isReturnPieces
                           ? Math.round(pendingQtyNum)
@@ -1334,6 +1318,7 @@ export default function OutsourceBatchManager({
                 </span>
               </div>
 
+              {/* Physical Received Length / Pieces */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
@@ -1349,25 +1334,40 @@ export default function OutsourceBatchManager({
                     </span>
                   )}
                 </div>
-                <input
-                  type="number"
-                  step={isReturnPieces ? "1" : "0.01"}
-                  name="receivedQty"
-                  required
-                  disabled={!isReturnPieces && !returnUnit}
-                  min={isReturnPieces ? "1" : "0.01"}
-                  inputMode="decimal"
-                  value={receivedQtyInput}
-                  onChange={(e) => setReceivedQtyInput(e.target.value)}
-                  placeholder={
-                    !isReturnPieces && !returnUnit
-                      ? "Select Slip Unit (M or Yd) first"
-                      : isReturnPieces
-                      ? "e.g. 495"
-                      : `e.g. ${returnUnit === "YARDS" ? "2150.00" : "2000.00"}`
-                  }
-                  className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
-                />
+
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      step={isReturnPieces ? "1" : "0.01"}
+                      name="receivedQty"
+                      required
+                      disabled={!isReturnPieces && !returnUnit}
+                      min={isReturnPieces ? "1" : "0.01"}
+                      inputMode="decimal"
+                      value={receivedQtyInput}
+                      onChange={(e) => setReceivedQtyInput(e.target.value)}
+                      placeholder={
+                        !isReturnPieces && !returnUnit
+                          ? "Select unit above first"
+                          : isReturnPieces
+                          ? "e.g. 495"
+                          : `e.g. ${returnUnit === "YARDS" ? "2150.00" : "2000.00"}`
+                      }
+                      className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm font-mono tabular-nums text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
+                    />
+                  </div>
+
+                  <div className="w-32 sm:w-36 shrink-0 h-11 px-3 bg-zinc-50 border border-zinc-200 rounded-md text-xs font-mono font-medium flex items-center justify-center text-zinc-600">
+                    {isReturnPieces
+                      ? "Pcs"
+                      : returnUnit === "METERS"
+                      ? "Meters (m)"
+                      : returnUnit === "YARDS"
+                      ? "Yards (yd)"
+                      : "—"}
+                  </div>
+                </div>
               </div>
 
               {receivedQtyNum > 0 && (isReturnPieces || returnUnit) && (
