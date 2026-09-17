@@ -77,13 +77,16 @@ export default async function AdminPage() {
               <div className="mt-1 text-xl font-bold font-mono text-zinc-950">{partiesCount}</div>
             </Link>
 
-            <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
+            <Link
+              href="/dashboard?tab=vendors"
+              className="bg-white hover:bg-zinc-50 border border-zinc-200 hover:border-zinc-300 rounded-lg p-3.5 shadow-xs transition-all block group cursor-pointer"
+            >
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">
-                <span>Dyeing Vendors</span>
-                <Truck className="w-4 h-4 text-zinc-400" />
+                <span>Outsource Vendors</span>
+                <Truck className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
               </div>
               <div className="mt-1 text-xl font-bold font-mono text-zinc-950">{vendorsCount}</div>
-            </div>
+            </Link>
 
             <div className="bg-white border border-zinc-200 rounded-lg p-3.5 shadow-xs">
               <div className="flex items-center justify-between text-zinc-500 text-xs font-medium">

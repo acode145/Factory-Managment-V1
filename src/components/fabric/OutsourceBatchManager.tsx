@@ -19,6 +19,7 @@ import {
   Layers,
   FileText,
   Boxes,
+  Truck,
 } from "lucide-react";
 
 interface PartyOption {
@@ -544,9 +545,18 @@ export default function OutsourceBatchManager({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                Outsource Vendor (Dyer / Printer) *
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
+                  Outsource Vendor *
+                </label>
+                <a
+                  href="/dashboard?tab=vendors"
+                  className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-900 underline underline-offset-2 flex items-center gap-1 transition-colors"
+                >
+                  <Truck className="w-3 h-3 text-zinc-400" />
+                  <span>+ Add Vendor</span>
+                </a>
+              </div>
               <select
                 name="vendorId"
                 required
@@ -558,10 +568,10 @@ export default function OutsourceBatchManager({
                     : "border-zinc-300 focus:ring-zinc-900"
                 }`}
               >
-                <option value="">-- Select Dyer / Printer --</option>
+                <option value="">-- Select Outsource Vendor --</option>
                 {vendors.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.name} ({v.defaultProcess})
+                    {v.name} ({v.code})
                   </option>
                 ))}
               </select>
@@ -783,7 +793,9 @@ export default function OutsourceBatchManager({
                           <option value="SOLID_DYEING">SOLID_DYEING (Dye House)</option>
                           <option value="ROTARY_PRINTING">ROTARY_PRINTING (Screen)</option>
                           <option value="DIGITAL_PRINTING">DIGITAL_PRINTING (Reactive)</option>
-                          <option value="WASHING">WASHING (Chemical)</option>
+                          <option value="WASHING">WASHING (Chemical / Washing)</option>
+                          <option value="RAFFU_MENDING">RAFFU_MENDING (Raffu / Mending)</option>
+                          <option value="OTHER">OTHER (Specialized / General)</option>
                         </select>
                       </div>
 

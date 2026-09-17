@@ -7,7 +7,9 @@ import OutsourceBatchManager from "@/components/fabric/OutsourceBatchManager";
 import DeliveryChallanForm from "@/components/fabric/DeliveryChallanForm";
 import PartyRunningLedger from "@/components/fabric/PartyRunningLedger";
 import PartyManagement from "@/components/fabric/PartyManagement";
+import VendorManagement from "@/components/fabric/VendorManagement";
 import { getNextPartyCode } from "@/actions/party";
+import { getNextVendorCode } from "@/actions/vendor";
 import { metersToYards, yardsToMeters } from "@/lib/units";
 import {
   Layers,
@@ -52,8 +54,18 @@ export default async function DashboardPage({
     }),
     prisma.vendor.findMany({
       where: { isActive: true },
-      select: { id: true, name: true, code: true, defaultProcess: true },
-      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        defaultProcess: true,
+        contactPerson: true,
+        phone: true,
+        address: true,
+        isActive: true,
+        createdAt: true,
+      },
+      orderBy: { code: "asc" },
     }),
     prisma.fabricInward.findMany({
       orderBy: { createdAt: "desc" },
@@ -100,6 +112,7 @@ export default async function DashboardPage({
   ]);
 
   const nextPartyCode = await getNextPartyCode();
+  const nextVendorCode = await getNextVendorCode();
   const canCreateParty =
     session.role === "ADMIN" || session.role === "FABRIC_PROCESSING_INCHARGE";
 
@@ -443,6 +456,18 @@ export default async function DashboardPage({
             <Building2 className="w-3.5 h-3.5" />
             <span>Client Parties</span>
           </Link>
+
+          <Link
+            href="/dashboard?tab=vendors"
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
+              tab === "vendors"
+                ? "bg-zinc-900 text-white shadow-xs"
+                : "bg-white text-zinc-600 hover:text-zinc-950 border border-zinc-200"
+            }`}
+          >
+            <Truck className="w-3.5 h-3.5" />
+            <span>Outsource Vendors</span>
+          </Link>
         </div>
 
         {/* Tab View Content */}
@@ -476,6 +501,14 @@ export default async function DashboardPage({
             parties={parties}
             canCreateParty={canCreateParty}
             nextPartyCode={nextPartyCode}
+          />
+        )}
+
+        {tab === "vendors" && (
+          <VendorManagement
+            vendors={vendors}
+            canCreateVendor={canCreateParty}
+            nextVendorCode={nextVendorCode}
           />
         )}
       </main>
