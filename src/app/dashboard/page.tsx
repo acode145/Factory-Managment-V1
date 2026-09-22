@@ -181,7 +181,7 @@ export default async function DashboardPage({
     machineNumber: t.machineNumber,
     operatorName: t.operatorName,
     remarks: t.remarks,
-    transferDate: t.transferDate,
+    transferDate: t.transferDate instanceof Date ? t.transferDate.toISOString() : String(t.transferDate),
     transferredBy: t.transferredBy,
     party: t.party,
     inward: t.inward,
@@ -529,7 +529,7 @@ export default async function DashboardPage({
 
         {tab === "workstations" && (
           <WorkstationManager
-            parties={parties}
+            parties={partyBalances}
             inwards={inwardList}
             transfers={transfers}
           />

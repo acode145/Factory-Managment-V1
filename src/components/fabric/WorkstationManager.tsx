@@ -1,12 +1,14 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useMemo } from "react";
 import {
   createDepartmentTransferAction,
   TransferActionState,
+} from "@/actions/transfer";
+import {
   WORKSTATION_DEPARTMENTS,
   WorkstationDepartment,
-} from "@/actions/transfer";
+} from "@/lib/workstations";
 import DatePicker from "@/components/ui/DatePicker";
 import { metersToYards } from "@/lib/units";
 import {
@@ -93,20 +95,24 @@ const DEPT_LABELS: Record<WorkstationDepartment, string> = {
 };
 
 export default function WorkstationManager({
-  parties,
+  parties = [],
   inwards = [],
   transfers = [],
 }: {
-  parties: PartyOption[];
+  parties?: PartyOption[];
   inwards?: InwardLotOption[];
   transfers?: TransferLogItem[];
 }) {
+  const safeParties = useMemo(() => (Array.isArray(parties) ? parties : []), [parties]);
+  const safeInwards = useMemo(() => (Array.isArray(inwards) ? inwards : []), [inwards]);
+  const safeTransfers = useMemo(() => (Array.isArray(transfers) ? transfers : []), [transfers]);
+
   const [state, formAction, isPending] = useActionState<TransferActionState, FormData>(
     createDepartmentTransferAction,
     {}
   );
 
-  const [selectedPartyId, setSelectedPartyId] = useState(parties[0]?.id || "");
+  const [selectedPartyId, setSelectedPartyId] = useState(safeParties[0]?.id || "");
   const [selectedInwardId, setSelectedInwardId] = useState("");
   const [selectedInwardItemId, setSelectedInwardItemId] = useState("");
   const [fromDept, setFromDept] = useState<WorkstationDepartment>("STORE");
@@ -116,15 +122,21 @@ export default function WorkstationManager({
   const [activeUnit, setActiveUnit] = useState<"METERS" | "YARDS" | "PIECES">("METERS");
   const [searchLog, setSearchLog] = useState("");
 
-  const partyInwards = inwards.filter((i) => i.partyId === selectedPartyId);
-  const currentInward = inwards.find((i) => i.id === selectedInwardId);
-  const currentItem = currentInward?.items?.find((it) => it.id === selectedInwardItemId);
+  useEffect(() => {
+    if (!selectedPartyId && safeParties.length > 0) {
+      setSelectedPartyId(safeParties[0].id);
+    }
+  }, [safeParties, selectedPartyId]);
+
+  const partyInwards = safeInwards.filter((i) => i && i.partyId === selectedPartyId);
+  const currentInward = safeInwards.find((i) => i && i.id === selectedInwardId);
+  const currentItem = currentInward?.items?.find((it) => it && it.id === selectedInwardItemId);
 
   // Auto-fill fabric specification and unit when inward lot item changes
   const handleLotChange = (itemId: string) => {
     setSelectedInwardItemId(itemId);
     if (itemId && currentInward?.items) {
-      const item = currentInward.items.find((it) => it.id === itemId);
+      const item = currentInward.items.find((it) => it && it.id === itemId);
       if (item) {
         setFabricDesc(`${item.fabricType} (${item.colorShade})`);
         setActiveUnit(
@@ -142,7 +154,7 @@ export default function WorkstationManager({
     setSelectedInwardId(inwardId);
     setSelectedInwardItemId("");
     if (inwardId) {
-      const inv = inwards.find((i) => i.id === inwardId);
+      const inv = safeInwards.find((i) => i && i.id === inwardId);
       if (inv?.items && inv.items.length === 1) {
         const it = inv.items[0];
         setSelectedInwardItemId(it.id);
@@ -185,7 +197,8 @@ export default function WorkstationManager({
   }
 
   // 2. Tally all historical transfers for this party & lot
-  const relevantTransfers = transfers.filter((t) => {
+  const relevantTransfers = safeTransfers.filter((t) => {
+    if (!t) return false;
     if (t.partyId !== selectedPartyId) return false;
     if (selectedInwardItemId && t.inwardItemId !== selectedInwardItemId) return false;
     if (selectedInwardId && !selectedInwardItemId && t.inwardId !== selectedInwardId) return false;
@@ -217,14 +230,15 @@ export default function WorkstationManager({
     numQty <= availableAtSource;
 
   // Filter transfers history
-  const filteredLog = transfers.filter((t) => {
+  const filteredLog = safeTransfers.filter((t) => {
+    if (!t) return false;
     const q = searchLog.toLowerCase().trim();
     if (!q) return true;
     return (
-      t.transferNumber.toLowerCase().includes(q) ||
-      t.fabricDescription.toLowerCase().includes(q) ||
-      t.fromDepartment.toLowerCase().includes(q) ||
-      t.toDepartment.toLowerCase().includes(q) ||
+      (t.transferNumber && t.transferNumber.toLowerCase().includes(q)) ||
+      (t.fabricDescription && t.fabricDescription.toLowerCase().includes(q)) ||
+      (t.fromDepartment && t.fromDepartment.toLowerCase().includes(q)) ||
+      (t.toDepartment && t.toDepartment.toLowerCase().includes(q)) ||
       (t.operatorName && t.operatorName.toLowerCase().includes(q)) ||
       (t.machineNumber && t.machineNumber.toLowerCase().includes(q)) ||
       (t.party?.name && t.party.name.toLowerCase().includes(q))
@@ -273,7 +287,7 @@ export default function WorkstationManager({
               }}
               className="h-8 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
             >
-              {parties.map((p) => (
+              {safeParties.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.code})
                 </option>
@@ -556,7 +570,7 @@ export default function WorkstationManager({
                 <p className="text-xs text-zinc-500">Chronological history of room-to-room material handovers</p>
               </div>
               <span className="text-xs font-mono font-bold bg-zinc-100 px-2.5 py-1 rounded text-zinc-700 self-start sm:self-auto">
-                {transfers.length} Transfers
+                {safeTransfers.length} Transfers
               </span>
             </div>
 

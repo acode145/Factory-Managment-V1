@@ -11,16 +11,7 @@ function generateCode(prefix: string) {
   return `${prefix}-${timestamp}${random}`;
 }
 
-export const WORKSTATION_DEPARTMENTS = [
-  "STORE",
-  "EMBROIDERY",
-  "CROPPING",
-  "CUTTING",
-  "FINISHING",
-  "PACKAGING",
-] as const;
-
-export type WorkstationDepartment = (typeof WORKSTATION_DEPARTMENTS)[number];
+import { WORKSTATION_DEPARTMENTS, WorkstationDepartment } from "@/lib/workstations";
 
 const TransferSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
