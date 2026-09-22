@@ -532,6 +532,7 @@ export default async function DashboardPage({
             parties={partyBalances}
             inwards={inwardList}
             transfers={transfers}
+            batches={batches}
           />
         )}
 

@@ -3,6 +3,7 @@
 import { useActionState, useState, useEffect, useMemo } from "react";
 import {
   createDepartmentTransferAction,
+  deleteDepartmentTransferAction,
   TransferActionState,
 } from "@/actions/transfer";
 import {
@@ -24,6 +25,7 @@ import {
   Search,
   Cpu,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 
 export interface TransferLogItem {
@@ -98,10 +100,12 @@ export default function WorkstationManager({
   parties = [],
   inwards = [],
   transfers = [],
+  batches = [],
 }: {
   parties?: PartyOption[];
   inwards?: InwardLotOption[];
   transfers?: TransferLogItem[];
+  batches?: any[];
 }) {
   const safeParties = useMemo(() => (Array.isArray(parties) ? parties : []), [parties]);
   const safeInwards = useMemo(() => (Array.isArray(inwards) ? inwards : []), [inwards]);
@@ -111,6 +115,7 @@ export default function WorkstationManager({
     createDepartmentTransferAction,
     {}
   );
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
 
   const [selectedPartyId, setSelectedPartyId] = useState(safeParties[0]?.id || "");
   const [selectedInwardId, setSelectedInwardId] = useState("");
@@ -132,6 +137,28 @@ export default function WorkstationManager({
   const partyInwards = safeInwards.filter((i) => i && i.partyId === selectedPartyId);
   const currentInward = safeInwards.find((i) => i && i.id === selectedInwardId);
   const currentItem = currentInward?.items?.find((it) => it && it.id === selectedInwardItemId);
+
+  // Active outsource batches tracking for selected inward or lot item
+  const activeOutsourceBatches = useMemo(() => {
+    if (!selectedInwardId && !selectedInwardItemId) return [];
+    return (batches || []).filter((b: any) => {
+      if (b.status !== "WITH_VENDOR" && b.status !== "RECEIVED_PARTIAL") return false;
+      if (selectedInwardItemId && b.inwardItemId) {
+        return b.inwardItemId === selectedInwardItemId;
+      }
+      if (selectedInwardId && b.inwardId) {
+        return b.inwardId === selectedInwardId;
+      }
+      return false;
+    });
+  }, [batches, selectedInwardId, selectedInwardItemId]);
+
+  const totalAtOutsource = useMemo(() => {
+    return activeOutsourceBatches.reduce(
+      (sum: number, b: any) => sum + (Number(b.sentMeters || 0) - Number(b.accountedMeters || 0)),
+      0
+    );
+  }, [activeOutsourceBatches]);
 
   // Auto-fill fabric specification and unit when inward lot item changes
   const handleLotChange = (itemId: string) => {
@@ -173,6 +200,21 @@ export default function WorkstationManager({
     }
   };
 
+  const handleDeleteTransfer = async (id: string, transferNo: string) => {
+    if (!window.confirm(`Are you sure you want to delete transfer #${transferNo}? Material will return to the source workstation.`)) {
+      return;
+    }
+    setDeletePendingId(id);
+    try {
+      const res = await deleteDepartmentTransferAction(id);
+      if (res?.error) {
+        alert(res.error);
+      }
+    } finally {
+      setDeletePendingId(null);
+    }
+  };
+
   // Reset form on success
   useEffect(() => {
     if (state?.success) {
@@ -190,12 +232,19 @@ export default function WorkstationManager({
     PACKAGING: 0,
   };
 
-  // 1. Initial base store quantity from inward lot
+  // 1. Initial base store quantity from inward lot in factory custody
+  let baseCustodyQty = 0;
   if (currentItem) {
-    deptBalances.STORE = Number(currentItem.measuredQty || 0);
+    baseCustodyQty = Number(
+      currentItem.availableQty !== undefined && currentItem.availableQty !== null
+        ? currentItem.availableQty
+        : currentItem.availableMeters || 0
+    );
   } else if (currentInward) {
-    deptBalances.STORE = Number(currentInward.measuredMeters || 0);
+    baseCustodyQty = Number(currentInward.availableMeters || 0);
   }
+
+  deptBalances.STORE = baseCustodyQty;
 
   // 2. Tally all historical transfers for this party & lot
   const relevantTransfers = safeTransfers.filter((t) => {
@@ -395,7 +444,7 @@ export default function WorkstationManager({
                   <option value="">-- Select Inward Challan --</option>
                   {partyInwards.map((inv) => (
                     <option key={inv.id} value={inv.id}>
-                      Challan #{inv.partyChallanNo} ({inv.measuredMeters}m dock recvd)
+                      Challan #{inv.partyChallanNo} ({inv.availableMeters.toFixed(1)}m in factory)
                     </option>
                   ))}
                 </select>
@@ -415,10 +464,25 @@ export default function WorkstationManager({
                       <option value="">-- Select Specific Lot Item --</option>
                       {currentInward.items.map((it) => (
                         <option key={it.id} value={it.id}>
-                          Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — {it.measuredQty} {it.unit === "PIECES" ? "pcs" : "m"}
+                          Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — Factory Avail: {Number(it.availableQty || 0).toFixed(1)} {it.unit === "PIECES" ? "pcs" : "m"} (dock: {it.measuredQty})
                         </option>
                       ))}
                     </select>
+                  </div>
+                )}
+
+                {/* Active Outsource Notice if fabric is currently at dyer/printer */}
+                {totalAtOutsource > 0 && (
+                  <div className="mt-2.5 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-bold text-[11px]">
+                        {totalAtOutsource.toFixed(1)}m Currently at Outsource Dyer/Printer
+                      </div>
+                      <p className="text-[10px] text-amber-800 leading-tight mt-0.5">
+                        Fabric has been dispatched for processing and is not in factory custody. Only fabric received back can be transferred to internal workstations.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -632,9 +696,20 @@ export default function WorkstationManager({
                           </span>
                         )}
                       </div>
-                      <span className="font-mono text-[10px] text-zinc-400">
-                        {new Date(t.transferDate).toLocaleDateString()}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-zinc-400">
+                          {new Date(t.transferDate).toLocaleDateString()}
+                        </span>
+                        <button
+                          type="button"
+                          title="Delete / Void Transfer"
+                          disabled={deletePendingId === t.id}
+                          onClick={() => handleDeleteTransfer(t.id, t.transferNumber)}
+                          className="p-1 rounded text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between text-xs pt-1 border-t border-zinc-100">

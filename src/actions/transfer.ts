@@ -12,6 +12,7 @@ function generateCode(prefix: string) {
 }
 
 import { WORKSTATION_DEPARTMENTS, WorkstationDepartment } from "@/lib/workstations";
+import { metersToYards } from "@/lib/units";
 
 const TransferSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
@@ -122,25 +123,50 @@ export async function createDepartmentTransferAction(
 
   let availableAtFromDept = qtyIntoFromDept - qtyOutOfFromDept;
 
-  // If transferring from STORE, the starting base is the fabric balance currently in custody
+  // If transferring from STORE, the starting base is the fabric balance currently in factory custody
   if (fromDepartment === "STORE") {
     let baseStoreQty = 0;
+
+    let ledgerWhere: any = { partyId };
     if (inwardItemId) {
-      const item = await prisma.fabricInwardItem.findUnique({
-        where: { id: inwardItemId },
-        select: { measuredQty: true, unit: true },
-      });
-      baseStoreQty = Number(item?.measuredQty || 0);
+      ledgerWhere = {
+        OR: [
+          { inwardItemId },
+          { inwardId: inwardId || undefined, inwardItemId: null },
+        ],
+      };
     } else if (inwardId) {
-      const inv = await prisma.fabricInward.findUnique({
-        where: { id: inwardId },
-        select: { measuredMeters: true },
-      });
-      baseStoreQty = Number(inv?.measuredMeters || 0);
+      ledgerWhere = { inwardId };
     }
 
-    // Include base store stock
-    availableAtFromDept = Math.max(0, baseStoreQty + qtyIntoFromDept - qtyOutOfFromDept);
+    const ledgerEntries = await prisma.fabricLedgerEntry.findMany({
+      where: ledgerWhere,
+      select: {
+        creditMeters: true,
+        debitMeters: true,
+        shrinkageMeters: true,
+        creditPieces: true,
+        debitPieces: true,
+        shortagePieces: true,
+        unit: true,
+      },
+    });
+
+    if (unit === "PIECES") {
+      const c = ledgerEntries.reduce((s, e) => s + Number(e.creditPieces || 0), 0);
+      const d = ledgerEntries.reduce((s, e) => s + Number(e.debitPieces || 0), 0);
+      const sh = ledgerEntries.reduce((s, e) => s + Number(e.shortagePieces || 0), 0);
+      baseStoreQty = Math.max(0, c - d - sh);
+    } else {
+      const c = ledgerEntries.reduce((s, e) => s + Number(e.creditMeters || 0), 0);
+      const d = ledgerEntries.reduce((s, e) => s + Number(e.debitMeters || 0), 0);
+      const sh = ledgerEntries.reduce((s, e) => s + Number(e.shrinkageMeters || 0), 0);
+      const netMeters = Math.max(0, Number((c - d - sh).toFixed(2)));
+      baseStoreQty = unit === "YARDS" ? Number(metersToYards(netMeters).toFixed(2)) : netMeters;
+    }
+
+    // Include base store stock currently in factory custody
+    availableAtFromDept = Math.max(0, Number((baseStoreQty + qtyIntoFromDept - qtyOutOfFromDept).toFixed(2)));
   }
 
   // Verification guard: cannot move more than available at source department
@@ -148,7 +174,7 @@ export async function createDepartmentTransferAction(
     return {
       error: `Cannot transfer ${quantity} ${unit}. Only ${availableAtFromDept.toFixed(
         2
-      )} ${unit} is available in ${fromDepartment}.`,
+      )} ${unit} is available in ${fromDepartment} (Material may currently be with outsource dyer or already delivered).`,
     };
   }
 
@@ -185,5 +211,35 @@ export async function createDepartmentTransferAction(
   } catch (err: any) {
     console.error("Department transfer error:", err);
     return { error: err.message || "Failed to record department transfer." };
+  }
+}
+
+export async function deleteDepartmentTransferAction(
+  transferId: string
+): Promise<TransferActionState> {
+  const session = await requireAuth();
+
+  try {
+    const existing = await prisma.departmentTransfer.findUnique({
+      where: { id: transferId },
+    });
+
+    if (!existing) {
+      return { error: "Transfer record not found." };
+    }
+
+    await prisma.departmentTransfer.delete({
+      where: { id: transferId },
+    });
+
+    revalidatePath("/dashboard");
+
+    return {
+      success: true,
+      message: `Transfer #${existing.transferNumber} deleted. Material returned to source workstation.`,
+    };
+  } catch (err: any) {
+    console.error("Delete transfer error:", err);
+    return { error: err.message || "Failed to delete transfer record." };
   }
 }
