@@ -21,6 +21,7 @@ model User {
   outsourceSent     OutsourceBatch[] @relation("SentByUser")
   outsourceReceived OutsourceBatch[] @relation("ReceivedByUser")
   outsourceReturns  OutsourceBatchReturn[] @relation("ReturnReceivedByUser")
+  transfersMade     DepartmentTransfer[]   @relation("UserTransfers")
 }
 
 model Party {
@@ -40,6 +41,7 @@ model Party {
   deliveries       DeliveryChallan[]
   outsourceBatches OutsourceBatch[]
   ledgerEntries    FabricLedgerEntry[]
+  departmentTransfers DepartmentTransfer[]
 }
 
 model Vendor {
@@ -81,6 +83,7 @@ model FabricInward {
   outsourceBatches OutsourceBatch[]
   deliveries       DeliveryChallanItem[]
   ledgerEntries    FabricLedgerEntry[]
+  transfers        DepartmentTransfer[]
 }
 
 model FabricInwardItem {
@@ -100,6 +103,7 @@ model FabricInwardItem {
 
   ledgerEntries    FabricLedgerEntry[]
   outsourceBatches OutsourceBatch[]
+  transfers        DepartmentTransfer[]
 }
 
 model OutsourceBatch {
@@ -225,4 +229,36 @@ model FabricLedgerEntry {
   @@index([partyId])
   @@index([partyChallanNo])
   @@index([itemCategory])
+}
+
+model DepartmentTransfer {
+  id                String            @id @default(uuid())
+  transferNumber    String            @unique // TRF-2026-XXXX
+  partyId           String
+  party             Party             @relation(fields: [partyId], references: [id])
+  inwardId          String?
+  inward            FabricInward?     @relation(fields: [inwardId], references: [id])
+  inwardItemId      String?
+  inwardItem        FabricInwardItem? @relation(fields: [inwardItemId], references: [id])
+
+  fabricDescription String            // e.g. "Lawn 68/68 (Jet Black)"
+  unit              String            @default("METERS") // METERS, YARDS, PIECES
+  quantity          Decimal           @db.Decimal(10, 2)
+  damagedQuantity   Decimal           @default(0) @db.Decimal(10, 2)
+
+  fromDepartment    String            // STORE, EMBROIDERY, CROPPING, CUTTING, FINISHING, PACKAGING
+  toDepartment      String            // STORE, EMBROIDERY, CROPPING, CUTTING, FINISHING, PACKAGING
+  machineNumber     String?           // e.g. "Machine #04"
+  operatorName      String?           // Operator / Supervisor name
+  remarks           String?
+
+  transferredById   String
+  transferredBy     User              @relation("UserTransfers", fields: [transferredById], references: [id])
+  transferDate      DateTime          @default(now())
+  createdAt         DateTime          @default(now())
+
+  @@index([partyId])
+  @@index([fromDepartment])
+  @@index([toDepartment])
+  @@index([inwardItemId])
 }

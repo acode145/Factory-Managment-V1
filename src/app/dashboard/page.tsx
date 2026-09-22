@@ -19,8 +19,10 @@ import {
   BookOpen,
   Building2,
   AlertTriangle,
+  GitFork,
 } from "lucide-react";
 import Link from "next/link";
+import WorkstationManager from "@/components/fabric/WorkstationManager";
 
 export default async function DashboardPage({
   searchParams,
@@ -36,7 +38,7 @@ export default async function DashboardPage({
   const { tab = "inward" } = await searchParams;
 
   // Fetch data concurrently from Supabase
-  const [parties, vendors, rawInwardList, rawBatches, rawLedgerEntries] = await Promise.all([
+  const [parties, vendors, rawInwardList, rawBatches, rawLedgerEntries, rawTransfers] = await Promise.all([
     prisma.party.findMany({
       where: { isActive: true },
       select: {
@@ -109,6 +111,14 @@ export default async function DashboardPage({
         },
       },
     }),
+    prisma.departmentTransfer.findMany({
+      orderBy: { transferDate: "desc" },
+      include: {
+        party: { select: { name: true, code: true } },
+        inward: { select: { partyChallanNo: true } },
+        transferredBy: { select: { fullName: true } },
+      },
+    }),
   ]);
 
   const nextPartyCode = await getNextPartyCode();
@@ -154,6 +164,27 @@ export default async function DashboardPage({
       receivedBy: r.receivedBy,
       remarks: r.remarks,
     })),
+  }));
+
+  const transfers = rawTransfers.map((t: any) => ({
+    id: t.id,
+    transferNumber: t.transferNumber,
+    partyId: t.partyId,
+    inwardId: t.inwardId,
+    inwardItemId: t.inwardItemId,
+    fabricDescription: t.fabricDescription,
+    unit: t.unit,
+    quantity: Number(t.quantity),
+    damagedQuantity: Number(t.damagedQuantity || 0),
+    fromDepartment: t.fromDepartment,
+    toDepartment: t.toDepartment,
+    machineNumber: t.machineNumber,
+    operatorName: t.operatorName,
+    remarks: t.remarks,
+    transferDate: t.transferDate,
+    transferredBy: t.transferredBy,
+    party: t.party,
+    inward: t.inward,
   }));
 
   const ledgerEntries = rawLedgerEntries.map((e: any) => ({
@@ -446,6 +477,18 @@ export default async function DashboardPage({
           </Link>
 
           <Link
+            href="/dashboard?tab=workstations"
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
+              tab === "workstations"
+                ? "bg-zinc-900 text-white shadow-xs"
+                : "bg-white text-zinc-600 hover:text-zinc-950 border border-zinc-200"
+            }`}
+          >
+            <GitFork className="w-3.5 h-3.5" />
+            <span>Internal Workstations</span>
+          </Link>
+
+          <Link
             href="/dashboard?tab=parties"
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
               tab === "parties"
@@ -481,6 +524,14 @@ export default async function DashboardPage({
             vendors={vendors}
             batches={batches}
             inwards={inwardList}
+          />
+        )}
+
+        {tab === "workstations" && (
+          <WorkstationManager
+            parties={parties}
+            inwards={inwardList}
+            transfers={transfers}
           />
         )}
 
