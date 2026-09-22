@@ -19,8 +19,12 @@ const TransferSchema = z.object({
   inwardItemId: z.string().optional(),
   fabricDescription: z.string().trim().min(1, "Fabric description is required"),
   unit: z.enum(["METERS", "YARDS", "PIECES"]).default("METERS"),
-  fromDepartment: z.enum(WORKSTATION_DEPARTMENTS),
-  toDepartment: z.enum(WORKSTATION_DEPARTMENTS),
+  fromDepartment: z.enum(WORKSTATION_DEPARTMENTS, {
+    message: "Invalid source department.",
+  }),
+  toDepartment: z.enum(WORKSTATION_DEPARTMENTS, {
+    message: "Invalid destination department.",
+  }),
   quantity: z.coerce.number().positive("Transfer quantity must be greater than 0"),
   damagedQuantity: z.coerce.number().min(0).default(0),
   machineNumber: z.string().trim().optional(),
@@ -45,7 +49,7 @@ export async function createDepartmentTransferAction(
     partyId: formData.get("partyId"),
     inwardId: formData.get("inwardId") || undefined,
     inwardItemId: formData.get("inwardItemId") || undefined,
-    fabricDescription: formData.get("fabricDescription"),
+    fabricDescription: (formData.get("fabricDescription") as string)?.trim() || "General Fabric",
     unit: formData.get("unit") || "METERS",
     fromDepartment: formData.get("fromDepartment"),
     toDepartment: formData.get("toDepartment"),
@@ -83,11 +87,11 @@ export async function createDepartmentTransferAction(
   }
 
   // Calculate current available quantity at fromDepartment for this lot/party
-  let lotWhere: any = { partyId };
+  const lotWhere: any = { partyId };
   if (inwardItemId) {
-    lotWhere = { inwardItemId };
+    lotWhere.inwardItemId = inwardItemId;
   } else if (inwardId) {
-    lotWhere = { inwardId };
+    lotWhere.inwardId = inwardId;
   }
 
   const previousTransfers = await prisma.departmentTransfer.findMany({

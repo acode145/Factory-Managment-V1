@@ -120,6 +120,7 @@ export default function WorkstationManager({
   const [transferQty, setTransferQty] = useState("");
   const [fabricDesc, setFabricDesc] = useState("");
   const [activeUnit, setActiveUnit] = useState<"METERS" | "YARDS" | "PIECES">("METERS");
+  const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [searchLog, setSearchLog] = useState("");
 
   useEffect(() => {
@@ -372,8 +373,13 @@ export default function WorkstationManager({
 
             <form action={formAction} className="space-y-4">
               <input type="hidden" name="partyId" value={selectedPartyId} />
-              <input type="hidden" name="fabricDescription" value={fabricDesc} />
+              <input type="hidden" name="inwardId" value={selectedInwardId} />
+              <input type="hidden" name="inwardItemId" value={selectedInwardItemId} />
+              <input type="hidden" name="fromDepartment" value={fromDept} />
+              <input type="hidden" name="toDepartment" value={toDept} />
+              <input type="hidden" name="fabricDescription" value={fabricDesc || "General Fabric"} />
               <input type="hidden" name="unit" value={activeUnit} />
+              <input type="hidden" name="transferDate" value={transferDate} />
 
               {/* Inward Challan / Lot Selector */}
               <div>
@@ -497,8 +503,20 @@ export default function WorkstationManager({
                 )}
               </div>
 
-              {/* Machine # & Operator Name (Optional) */}
+              {/* Transfer Date & Machine # */}
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
+                    Transfer Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={transferDate}
+                    onChange={(e) => setTransferDate(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                  />
+                </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
                     Machine # <span className="font-normal lowercase text-zinc-400">(optional)</span>
@@ -510,17 +528,19 @@ export default function WorkstationManager({
                     className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                    Operator / Incharge <span className="font-normal lowercase text-zinc-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="operatorName"
-                    placeholder="e.g. Aslam Khan"
-                    className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                  />
-                </div>
+              </div>
+
+              {/* Operator Name */}
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
+                  Operator / Incharge <span className="font-normal lowercase text-zinc-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  name="operatorName"
+                  placeholder="e.g. Aslam Khan"
+                  className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                />
               </div>
 
               {/* Remarks */}
