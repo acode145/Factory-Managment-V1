@@ -10,8 +10,6 @@ import {
   WORKSTATION_DEPARTMENTS,
   WorkstationDepartment,
 } from "@/lib/workstations";
-import DatePicker from "@/components/ui/DatePicker";
-import { metersToYards } from "@/lib/units";
 import {
   GitFork,
   ArrowRight,
@@ -26,6 +24,8 @@ import {
   Cpu,
   Sparkles,
   Trash2,
+  Lock,
+  Filter,
 } from "lucide-react";
 
 export interface TransferLogItem {
@@ -101,15 +101,28 @@ export default function WorkstationManager({
   inwards = [],
   transfers = [],
   batches = [],
+  currentUser,
 }: {
   parties?: PartyOption[];
   inwards?: InwardLotOption[];
   transfers?: TransferLogItem[];
   batches?: any[];
+  currentUser?: {
+    role: string;
+    department?: string | null;
+  };
 }) {
   const safeParties = useMemo(() => (Array.isArray(parties) ? parties : []), [parties]);
   const safeInwards = useMemo(() => (Array.isArray(inwards) ? inwards : []), [inwards]);
   const safeTransfers = useMemo(() => (Array.isArray(transfers) ? transfers : []), [transfers]);
+
+  // Determine permissions based on user role and assigned department
+  const isUnrestricted =
+    currentUser?.role === "ADMIN" ||
+    currentUser?.role === "FABRIC_PROCESSING_INCHARGE" ||
+    !currentUser?.department;
+
+  const userDept = (currentUser?.department as WorkstationDepartment) || null;
 
   const [state, formAction, isPending] = useActionState<TransferActionState, FormData>(
     createDepartmentTransferAction,
@@ -120,13 +133,50 @@ export default function WorkstationManager({
   const [selectedPartyId, setSelectedPartyId] = useState(safeParties[0]?.id || "");
   const [selectedInwardId, setSelectedInwardId] = useState("");
   const [selectedInwardItemId, setSelectedInwardItemId] = useState("");
-  const [fromDept, setFromDept] = useState<WorkstationDepartment>("STORE");
-  const [toDept, setToDept] = useState<WorkstationDepartment>("EMBROIDERY");
+
+  // Initialize fromDept based on user role
+  const [fromDept, setFromDept] = useState<WorkstationDepartment>(() => {
+    if (!isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)) {
+      return userDept;
+    }
+    return "STORE";
+  });
+
+  // Initialize toDept ensuring it is different from fromDept
+  const [toDept, setToDept] = useState<WorkstationDepartment>(() => {
+    const initialFrom =
+      !isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)
+        ? userDept
+        : "STORE";
+    return WORKSTATION_DEPARTMENTS.find((d) => d !== initialFrom) || "EMBROIDERY";
+  });
+
   const [transferQty, setTransferQty] = useState("");
   const [fabricDesc, setFabricDesc] = useState("");
   const [activeUnit, setActiveUnit] = useState<"METERS" | "YARDS" | "PIECES">("METERS");
   const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [searchLog, setSearchLog] = useState("");
+  const [logDeptFilter, setLogDeptFilter] = useState<string>("ALL");
+
+  // Keep fromDept locked for department incharges
+  useEffect(() => {
+    if (!isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)) {
+      setFromDept(userDept);
+      if (toDept === userDept) {
+        const next = WORKSTATION_DEPARTMENTS.find((d) => d !== userDept) || "STORE";
+        setToDept(next);
+      }
+    }
+  }, [isUnrestricted, userDept, toDept]);
+
+  // Ensure toDept does not collide with fromDept
+  const handleFromDeptChange = (newFrom: WorkstationDepartment) => {
+    setFromDept(newFrom);
+    if (newFrom === toDept) {
+      const next = WORKSTATION_DEPARTMENTS.find((d) => d !== newFrom) || "EMBROIDERY";
+      setToDept(next);
+    }
+  };
 
   useEffect(() => {
     if (!selectedPartyId && safeParties.length > 0) {
@@ -201,7 +251,11 @@ export default function WorkstationManager({
   };
 
   const handleDeleteTransfer = async (id: string, transferNo: string) => {
-    if (!window.confirm(`Are you sure you want to delete transfer #${transferNo}? Material will return to the source workstation.`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to void transfer #${transferNo}? Material will return to the source workstation.`
+      )
+    ) {
       return;
     }
     setDeletePendingId(id);
@@ -279,21 +333,39 @@ export default function WorkstationManager({
     numQty > 0 &&
     numQty <= availableAtSource;
 
-  // Filter transfers history
-  const filteredLog = safeTransfers.filter((t) => {
-    if (!t) return false;
-    const q = searchLog.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      (t.transferNumber && t.transferNumber.toLowerCase().includes(q)) ||
-      (t.fabricDescription && t.fabricDescription.toLowerCase().includes(q)) ||
-      (t.fromDepartment && t.fromDepartment.toLowerCase().includes(q)) ||
-      (t.toDepartment && t.toDepartment.toLowerCase().includes(q)) ||
-      (t.operatorName && t.operatorName.toLowerCase().includes(q)) ||
-      (t.machineNumber && t.machineNumber.toLowerCase().includes(q)) ||
-      (t.party?.name && t.party.name.toLowerCase().includes(q))
-    );
-  });
+  // Filter transfers history:
+  // - For Department Incharge: strictly scoped to transfers where fromDepartment === userDept || toDepartment === userDept
+  // - For Admin / Fabric Incharge: scoped by logDeptFilter tab (ALL or specific department)
+  // - Plus global text search query
+  const filteredLog = useMemo(() => {
+    return safeTransfers.filter((t) => {
+      if (!t) return false;
+
+      // Scoping rules
+      if (!isUnrestricted && userDept) {
+        if (t.fromDepartment !== userDept && t.toDepartment !== userDept) {
+          return false;
+        }
+      } else if (logDeptFilter !== "ALL") {
+        if (t.fromDepartment !== logDeptFilter && t.toDepartment !== logDeptFilter) {
+          return false;
+        }
+      }
+
+      // Search query filter
+      const q = searchLog.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (t.transferNumber && t.transferNumber.toLowerCase().includes(q)) ||
+        (t.fabricDescription && t.fabricDescription.toLowerCase().includes(q)) ||
+        (t.fromDepartment && t.fromDepartment.toLowerCase().includes(q)) ||
+        (t.toDepartment && t.toDepartment.toLowerCase().includes(q)) ||
+        (t.operatorName && t.operatorName.toLowerCase().includes(q)) ||
+        (t.machineNumber && t.machineNumber.toLowerCase().includes(q)) ||
+        (t.party?.name && t.party.name.toLowerCase().includes(q))
+      );
+    });
+  }, [safeTransfers, isUnrestricted, userDept, logDeptFilter, searchLog]);
 
   return (
     <div className="space-y-6">
@@ -312,444 +384,707 @@ export default function WorkstationManager({
         </div>
       )}
 
-      {/* 1. LIVE WORKSTATIONS PIPELINE CARDS */}
-      <div className="space-y-2.5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-bold text-zinc-950 uppercase tracking-wider flex items-center gap-2">
-              <GitFork className="w-4 h-4 text-zinc-700" />
-              <span>Live Workstation Pipeline & Room Balances</span>
-            </h2>
-            <p className="text-xs text-zinc-500">
-              Active fabric quantities currently residing at each factory workstation
-            </p>
-          </div>
-
-          {/* Party Quick Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 font-medium">Party:</span>
-            <select
-              value={selectedPartyId}
-              onChange={(e) => {
-                setSelectedPartyId(e.target.value);
-                setSelectedInwardId("");
-                setSelectedInwardItemId("");
-              }}
-              className="h-8 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-            >
-              {safeParties.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* 6 Department Cards in Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {WORKSTATION_DEPARTMENTS.map((dept) => {
-            const Icon = DEPT_ICONS[dept];
-            const qty = deptBalances[dept];
-            const isSource = fromDept === dept;
-            const isDest = toDept === dept;
-
-            return (
-              <div
-                key={dept}
-                onClick={() => setFromDept(dept)}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer shadow-2xs space-y-1.5 ${
-                  isSource
-                    ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
-                    : isDest
-                    ? "bg-amber-50/70 border-amber-300 text-zinc-900"
-                    : "bg-white border-zinc-200 hover:border-zinc-300 text-zinc-900"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`text-[10px] font-mono uppercase tracking-wider font-semibold ${
-                      isSource ? "text-zinc-300" : "text-zinc-500"
-                    }`}
-                  >
-                    {dept}
-                  </span>
-                  <Icon
-                    className={`w-3.5 h-3.5 ${
-                      isSource ? "text-emerald-400" : "text-zinc-400"
-                    }`}
-                  />
-                </div>
-
-                <div className="text-lg font-bold font-mono">
-                  {qty.toFixed(2)}
-                  <span
-                    className={`text-xs ml-1 font-sans font-normal ${
-                      isSource ? "text-zinc-300" : "text-zinc-500"
-                    }`}
-                  >
-                    {activeUnit === "PIECES" ? "pcs" : activeUnit === "YARDS" ? "yd" : "m"}
-                  </span>
-                </div>
-
-                <div
-                  className={`text-[10px] truncate ${
-                    isSource ? "text-zinc-400" : "text-zinc-500"
-                  }`}
-                >
-                  {DEPT_LABELS[dept]}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 2. TRANSFER FORM & LOG GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Transfer Form (5 cols) */}
-        <div className="lg:col-span-5">
-          <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center gap-2.5 pb-3.5 border-b border-zinc-100">
-              <div className="w-9 h-9 rounded-lg bg-zinc-900 text-white flex items-center justify-center">
-                <GitFork className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">Internal Department Handover</h3>
-                <p className="text-xs text-zinc-500">Move fabric batches between factory workstations</p>
-              </div>
+      {/* 1. PIPELINE & ROOM BALANCES */}
+      {isUnrestricted ? (
+        // ADMIN & FABRIC INCHARGE VIEW: 6 Department Cards Grid
+        <div className="space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold text-zinc-950 uppercase tracking-wider flex items-center gap-2">
+                <GitFork className="w-4 h-4 text-zinc-700" />
+                <span>Live Workstation Pipeline & Room Balances</span>
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Plant-wide fabric inventory across all workstations
+              </p>
             </div>
 
-            <form action={formAction} className="space-y-4">
-              <input type="hidden" name="partyId" value={selectedPartyId} />
-              <input type="hidden" name="inwardId" value={selectedInwardId} />
-              <input type="hidden" name="inwardItemId" value={selectedInwardItemId} />
-              <input type="hidden" name="fromDepartment" value={fromDept} />
-              <input type="hidden" name="toDepartment" value={toDept} />
-              <input type="hidden" name="fabricDescription" value={fabricDesc || "General Fabric"} />
-              <input type="hidden" name="unit" value={activeUnit} />
-              <input type="hidden" name="transferDate" value={transferDate} />
+            {/* Party Quick Filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500 font-medium">Party:</span>
+              <select
+                value={selectedPartyId}
+                onChange={(e) => {
+                  setSelectedPartyId(e.target.value);
+                  setSelectedInwardId("");
+                  setSelectedInwardItemId("");
+                }}
+                className="h-8 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              >
+                {safeParties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
-              {/* Inward Challan / Lot Selector */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                  Inward Challan / Originating Lot *
-                </label>
-                <select
-                  required
-                  value={selectedInwardId}
-                  onChange={(e) => handleInwardChange(e.target.value)}
-                  className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {WORKSTATION_DEPARTMENTS.map((dept) => {
+              const Icon = DEPT_ICONS[dept];
+              const qty = deptBalances[dept];
+              const isSource = fromDept === dept;
+              const isDest = toDept === dept;
+
+              return (
+                <div
+                  key={dept}
+                  onClick={() => handleFromDeptChange(dept)}
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer shadow-2xs space-y-1.5 ${
+                    isSource
+                      ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                      : isDest
+                      ? "bg-amber-50/70 border-amber-300 text-zinc-900"
+                      : "bg-white border-zinc-200 hover:border-zinc-300 text-zinc-900"
+                  }`}
                 >
-                  <option value="">-- Select Inward Challan --</option>
-                  {partyInwards.map((inv) => (
-                    <option key={inv.id} value={inv.id}>
-                      Challan #{inv.partyChallanNo} ({inv.availableMeters.toFixed(1)}m in factory)
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-[10px] font-mono uppercase tracking-wider font-semibold ${
+                        isSource ? "text-zinc-300" : "text-zinc-500"
+                      }`}
+                    >
+                      {dept}
+                    </span>
+                    <Icon
+                      className={`w-3.5 h-3.5 ${
+                        isSource ? "text-emerald-400" : "text-zinc-400"
+                      }`}
+                    />
+                  </div>
+
+                  <div className="text-lg font-bold font-mono">
+                    {qty.toFixed(2)}
+                    <span
+                      className={`text-xs ml-1 font-sans font-normal ${
+                        isSource ? "text-zinc-300" : "text-zinc-500"
+                      }`}
+                    >
+                      {activeUnit === "PIECES" ? "pcs" : activeUnit === "YARDS" ? "yd" : "m"}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`text-[10px] truncate ${
+                      isSource ? "text-zinc-400" : "text-zinc-500"
+                    }`}
+                  >
+                    {DEPT_LABELS[dept]}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        // DEPARTMENT INCHARGE VIEW: 1 Full-Width Live Room Card
+        userDept && (
+          <div className="bg-zinc-900 text-white rounded-xl p-5 shadow-xs border border-zinc-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-emerald-400">
+                  {(() => {
+                    const DeptIcon = DEPT_ICONS[userDept] || Building2;
+                    return <DeptIcon className="w-5 h-5" />;
+                  })()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-white tracking-wide">
+                      {userDept} Room Custody & Balance
+                    </h2>
+                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                      Your Workstation
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400">{DEPT_LABELS[userDept]}</p>
+                </div>
+              </div>
+
+              {/* Party Switcher */}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-xs text-zinc-400 font-medium">Party:</span>
+                <select
+                  value={selectedPartyId}
+                  onChange={(e) => {
+                    setSelectedPartyId(e.target.value);
+                    setSelectedInwardId("");
+                    setSelectedInwardItemId("");
+                  }}
+                  className="h-9 px-3 bg-zinc-800 border border-zinc-700 rounded-lg text-xs font-semibold text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-400"
+                >
+                  {safeParties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
                     </option>
                   ))}
                 </select>
-
-                {/* Specific Lot Item if inward has multiple */}
-                {currentInward && currentInward.items && currentInward.items.length > 1 && (
-                  <div className="mt-2">
-                    <label className="block text-[11px] font-bold text-amber-900 uppercase mb-1">
-                      Specific Lot Item *
-                    </label>
-                    <select
-                      required
-                      value={selectedInwardItemId}
-                      onChange={(e) => handleLotChange(e.target.value)}
-                      className="w-full h-9 px-2.5 bg-zinc-50 border border-zinc-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                    >
-                      <option value="">-- Select Specific Lot Item --</option>
-                      {currentInward.items.map((it) => (
-                        <option key={it.id} value={it.id}>
-                          Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — Factory Avail: {Number(it.availableQty || 0).toFixed(1)} {it.unit === "PIECES" ? "pcs" : "m"} (dock: {it.measuredQty})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* Active Outsource Notice if fabric is currently at dyer/printer */}
-                {totalAtOutsource > 0 && (
-                  <div className="mt-2.5 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-bold text-[11px]">
-                        {totalAtOutsource.toFixed(1)}m Currently at Outsource Dyer/Printer
-                      </div>
-                      <p className="text-[10px] text-amber-800 leading-tight mt-0.5">
-                        Fabric has been dispatched for processing and is not in factory custody. Only fabric received back can be transferred to internal workstations.
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
+            </div>
 
-              {/* Source & Destination Departments */}
-              <div className="grid grid-cols-2 gap-3 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-600 uppercase mb-1">
-                    From Department *
-                  </label>
-                  <select
-                    value={fromDept}
-                    onChange={(e) => setFromDept(e.target.value as WorkstationDepartment)}
-                    className="w-full h-9 px-2 bg-white border border-zinc-300 rounded-md text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                  >
-                    {WORKSTATION_DEPARTMENTS.map((dept) => (
-                      <option key={dept} value={dept}>
-                        {dept} ({deptBalances[dept].toFixed(1)})
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                    Available: <strong>{availableAtSource.toFixed(2)}</strong> {activeUnit === "PIECES" ? "pcs" : "m"}
+            {/* Room Balance & Context Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+              <div className="bg-zinc-800/70 border border-zinc-700/60 rounded-lg p-3.5 space-y-1">
+                <span className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block">
+                  Available in Room
+                </span>
+                <div className="text-2xl font-bold font-mono text-white flex items-baseline gap-1.5">
+                  <span>{deptBalances[userDept].toFixed(2)}</span>
+                  <span className="text-xs font-sans text-zinc-400 font-normal">
+                    {activeUnit === "PIECES" ? "Pieces" : activeUnit === "YARDS" ? "Yards" : "Meters"}
                   </span>
                 </div>
+                <span className="text-[10px] text-emerald-400 block font-mono">
+                  Ready for handover / processing
+                </span>
+              </div>
 
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-600 uppercase mb-1">
-                    To Department *
-                  </label>
-                  <select
-                    value={toDept}
-                    onChange={(e) => setToDept(e.target.value as WorkstationDepartment)}
-                    className="w-full h-9 px-2 bg-white border border-zinc-300 rounded-md text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                  >
-                    {WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept).map((dept) => (
-                      <option key={dept} value={dept}>
-                        {dept}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                    Receiving workstation
-                  </span>
+              <div className="bg-zinc-800/70 border border-zinc-700/60 rounded-lg p-3.5 space-y-1">
+                <span className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block">
+                  Active Lot Selection
+                </span>
+                <div className="text-sm font-semibold text-zinc-200 truncate">
+                  {currentInward ? `Challan #${currentInward.partyChallanNo}` : "No lot selected"}
+                </div>
+                <div className="text-[11px] text-zinc-400 truncate">
+                  {fabricDesc || "Select inward lot below"}
                 </div>
               </div>
 
-              {/* Quantity to Move */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider">
-                    Transfer Quantity ({activeUnit === "PIECES" ? "Pieces" : activeUnit === "YARDS" ? "Yards" : "Meters"}) *
-                  </label>
-                  {availableAtSource > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setTransferQty(availableAtSource.toString())}
-                      className="text-[10px] font-mono text-zinc-600 hover:text-zinc-950 underline cursor-pointer"
-                    >
-                      Move All ({availableAtSource.toFixed(2)})
-                    </button>
-                  )}
+              <div className="bg-zinc-800/70 border border-zinc-700/60 rounded-lg p-3.5 space-y-1">
+                <span className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block">
+                  Handover Authorization
+                </span>
+                <div className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Outbound origin locked to {userDept}</span>
                 </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  name="quantity"
-                  required
-                  value={transferQty}
-                  onChange={(e) => setTransferQty(e.target.value)}
-                  placeholder={`Max ${availableAtSource.toFixed(2)}`}
-                  className={`w-full h-10 px-3 bg-white border rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 ${
-                    isOverQty
-                      ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20 text-rose-950"
-                      : "border-zinc-300 focus:ring-zinc-900"
-                  }`}
-                />
-                {isOverQty && (
-                  <p className="text-[11px] text-rose-600 font-medium mt-1">
-                    Quantity exceeds available balance ({availableAtSource.toFixed(2)} {activeUnit === "PIECES" ? "pcs" : "m"}) in {fromDept}.
-                  </p>
-                )}
+                <span className="text-[10px] text-zinc-400 block">
+                  You can transfer material to any downstream workstation
+                </span>
               </div>
+            </div>
+          </div>
+        )
+      )}
 
-              {/* Transfer Date & Machine # */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                    Transfer Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={transferDate}
-                    onChange={(e) => setTransferDate(e.target.value)}
-                    className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                    Machine # <span className="font-normal lowercase text-zinc-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="machineNumber"
-                    placeholder="e.g. Machine 04"
-                    className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                  />
-                </div>
-              </div>
+      {/* 2. FULL-WIDTH HANDOVER FORM */}
+      <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3.5 border-b border-zinc-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-zinc-900 text-white flex items-center justify-center">
+              <GitFork className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-zinc-950">Internal Department Handover</h3>
+              <p className="text-xs text-zinc-500">Record room-to-room material movements on the factory floor</p>
+            </div>
+          </div>
 
-              {/* Operator Name */}
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                  Operator / Incharge <span className="font-normal lowercase text-zinc-400">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  name="operatorName"
-                  placeholder="e.g. Aslam Khan"
-                  className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                />
-              </div>
-
-              {/* Remarks */}
-              <div>
-                <label className="block text-[11px] font-semibold text-zinc-600 uppercase mb-1">
-                  Notes / Batch Instructions <span className="font-normal lowercase text-zinc-400">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  name="remarks"
-                  placeholder="e.g. Fast-track for embroidery framing"
-                  className="w-full h-9 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                />
-              </div>
-
-              {/* Submit Button */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={!isFormValid || isPending}
-                  className={`w-full h-11 rounded-lg text-xs font-bold uppercase tracking-wider shadow-xs transition-all flex items-center justify-center gap-2 ${
-                    !isFormValid || isPending
-                      ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
-                      : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer"
-                  }`}
-                >
-                  {isPending ? (
-                    <span>Recording Handover...</span>
-                  ) : (
-                    <>
-                      <ArrowRight className="w-4 h-4 text-emerald-400" />
-                      <span>Transfer {fromDept} → {toDept}</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+          <div className="flex items-center gap-2">
+            {!isUnrestricted && userDept && (
+              <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                Origin: {userDept}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Transfer History Table (7 cols) */}
-        <div className="lg:col-span-7">
-          <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">Internal Transfer Log</h3>
-                <p className="text-xs text-zinc-500">Chronological history of room-to-room material handovers</p>
+        <form action={formAction} className="space-y-4">
+          <input type="hidden" name="partyId" value={selectedPartyId} />
+          <input type="hidden" name="inwardId" value={selectedInwardId} />
+          <input type="hidden" name="inwardItemId" value={selectedInwardItemId} />
+          <input type="hidden" name="fabricDescription" value={fabricDesc || "General Fabric"} />
+          <input type="hidden" name="unit" value={activeUnit} />
+          <input type="hidden" name="transferDate" value={transferDate} />
+
+          {/* ROW 1: INWARD LOT & FABRIC SELECTION (3 Columns) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Inward Challan / Originating Lot *
+              </label>
+              <select
+                required
+                value={selectedInwardId}
+                onChange={(e) => handleInwardChange(e.target.value)}
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              >
+                <option value="">-- Select Inward Challan --</option>
+                {partyInwards.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    Challan #{inv.partyChallanNo} ({inv.availableMeters.toFixed(1)}m in factory)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Specific Lot Item {currentInward && currentInward.items && currentInward.items.length > 1 ? "*" : "(Optional)"}
+              </label>
+              <select
+                disabled={!currentInward || !currentInward.items || currentInward.items.length <= 1}
+                value={selectedInwardItemId}
+                onChange={(e) => handleLotChange(e.target.value)}
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-50 disabled:text-zinc-400"
+              >
+                <option value="">
+                  {currentInward && currentInward.items && currentInward.items.length > 1
+                    ? "-- Select Specific Lot Item --"
+                    : currentInward
+                    ? "Single continuous lot"
+                    : "-- Select Challan First --"}
+                </option>
+                {currentInward?.items?.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    Lot #{it.itemIndex + 1}: {it.fabricType} ({it.colorShade}) — Avail: {Number(it.availableQty || 0).toFixed(1)} {it.unit === "PIECES" ? "pcs" : "m"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Fabric Specification & Unit
+              </label>
+              <div className="h-10 px-3 bg-zinc-50 border border-zinc-200 rounded-lg flex items-center justify-between text-xs font-medium text-zinc-800">
+                <span className="truncate max-w-[200px]">
+                  {fabricDesc || "Select inward lot"}
+                </span>
+                <span className="font-mono text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-700">
+                  {activeUnit}
+                </span>
               </div>
-              <span className="text-xs font-mono font-bold bg-zinc-100 px-2.5 py-1 rounded text-zinc-700 self-start sm:self-auto">
-                {safeTransfers.length} Transfers
+            </div>
+          </div>
+
+          {/* Active Outsource Notice if fabric is currently at dyer/printer */}
+          {totalAtOutsource > 0 && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-xs">
+                  {totalAtOutsource.toFixed(1)}m Currently with Outsource Dyer/Printer
+                </div>
+                <p className="text-[11px] text-amber-800 leading-tight mt-0.5">
+                  Fabric has been dispatched for external processing and is not in factory custody. Only fabric received back into factory can be transferred to internal workstations.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ROW 2: ROUTING, QUANTITY & DATE (4 Columns) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-zinc-50/70 rounded-xl border border-zinc-200">
+            {/* FROM DEPARTMENT */}
+            <div>
+              <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                From Department *
+              </label>
+              {!isUnrestricted && userDept ? (
+                // Locked for Department Incharge
+                <div>
+                  <div className="h-10 px-3 bg-zinc-100 border border-zinc-300 rounded-lg flex items-center justify-between text-xs font-bold text-zinc-900">
+                    <span className="flex items-center gap-1.5 font-mono">
+                      <Lock className="w-3.5 h-3.5 text-zinc-500" />
+                      {userDept}
+                    </span>
+                    <span className="text-[10px] font-mono text-zinc-500 font-normal">Locked</span>
+                  </div>
+                  <input type="hidden" name="fromDepartment" value={userDept} />
+                </div>
+              ) : (
+                // Dropdown for Admin and Fabric Processing Incharge
+                <select
+                  name="fromDepartment"
+                  value={fromDept}
+                  onChange={(e) => handleFromDeptChange(e.target.value as WorkstationDepartment)}
+                  className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                >
+                  {WORKSTATION_DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept} ({deptBalances[dept].toFixed(1)})
+                    </option>
+                  ))}
+                </select>
+              )}
+              <span className="text-[10px] text-zinc-500 font-mono block mt-1">
+                Available: <strong>{availableAtSource.toFixed(2)}</strong> {activeUnit === "PIECES" ? "pcs" : "m"}
               </span>
             </div>
 
-            {/* Search Filter */}
-            <div className="relative">
-              <input
-                type="text"
-                value={searchLog}
-                onChange={(e) => setSearchLog(e.target.value)}
-                placeholder="Search by transfer #, party, lot, room, or operator..."
-                className="w-full h-9 pl-8 pr-3 bg-zinc-50 border border-zinc-200 rounded-md text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 focus:bg-white"
-              />
-              <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5 pointer-events-none" />
+            {/* TO DEPARTMENT */}
+            <div>
+              <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                To Department *
+              </label>
+              <select
+                name="toDepartment"
+                value={toDept}
+                onChange={(e) => setToDept(e.target.value as WorkstationDepartment)}
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              >
+                {WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept).map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept} ({DEPT_LABELS[dept]})
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-zinc-500 font-mono block mt-1">
+                Receiving workstation
+              </span>
             </div>
 
-            {/* Transfers List */}
-            <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
-              {filteredLog.length === 0 ? (
-                <div className="p-8 text-center bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-zinc-400 text-xs">
-                  No department transfers recorded yet. Select an inward lot and transfer fabric to start tracking.
-                </div>
-              ) : (
-                filteredLog.map((t) => (
-                  <div
-                    key={t.id}
-                    className="p-3 border border-zinc-200 rounded-lg hover:border-zinc-300 transition-all bg-white hover:bg-zinc-50/50 shadow-2xs space-y-2"
+            {/* TRANSFER QUANTITY */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider">
+                  Quantity *
+                </label>
+                {availableAtSource > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTransferQty(availableAtSource.toString())}
+                    className="text-[10px] font-mono text-zinc-600 hover:text-zinc-950 underline cursor-pointer"
                   >
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-zinc-900 bg-zinc-100 px-2 py-0.5 rounded">
-                          {t.transferNumber}
-                        </span>
-                        <span className="font-semibold text-zinc-800 truncate max-w-[180px]">
-                          {t.party?.name || "Party"}
-                        </span>
-                        {t.inward?.partyChallanNo && (
-                          <span className="font-mono text-[10px] text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded">
-                            #{t.inward.partyChallanNo}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] text-zinc-400">
-                          {new Date(t.transferDate).toLocaleDateString()}
-                        </span>
-                        <button
-                          type="button"
-                          title="Delete / Void Transfer"
-                          disabled={deletePendingId === t.id}
-                          onClick={() => handleDeleteTransfer(t.id, t.transferNumber)}
-                          className="p-1 rounded text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
+                    Move All ({availableAtSource.toFixed(1)})
+                  </button>
+                )}
+              </div>
+              <input
+                type="number"
+                step="0.01"
+                name="quantity"
+                required
+                value={transferQty}
+                onChange={(e) => setTransferQty(e.target.value)}
+                placeholder={`Max ${availableAtSource.toFixed(2)}`}
+                className={`w-full h-10 px-3 bg-white border rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                  isOverQty
+                    ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20 text-rose-950"
+                    : "border-zinc-300 focus:ring-zinc-900"
+                }`}
+              />
+              {isOverQty && (
+                <p className="text-[10px] text-rose-600 font-medium mt-1">
+                  Exceeds balance ({availableAtSource.toFixed(2)} {activeUnit === "PIECES" ? "pcs" : "m"}) in {fromDept}.
+                </p>
+              )}
+            </div>
 
-                    <div className="flex items-center justify-between text-xs pt-1 border-t border-zinc-100">
-                      <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold">
-                        <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700">
+            {/* TRANSFER DATE */}
+            <div>
+              <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                Transfer Date *
+              </label>
+              <input
+                type="date"
+                required
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              />
+            </div>
+          </div>
+
+          {/* ROW 3: OPTIONAL METADATA (3 Columns) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
+                Machine # <span className="font-normal lowercase text-zinc-400">(optional)</span>
+              </label>
+              <input
+                type="text"
+                name="machineNumber"
+                placeholder="e.g. Machine 04 / Frame B"
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
+                Operator / Floor Incharge <span className="font-normal lowercase text-zinc-400">(optional)</span>
+              </label>
+              <input
+                type="text"
+                name="operatorName"
+                placeholder="e.g. Aslam Khan"
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
+                Batch Notes <span className="font-normal lowercase text-zinc-400">(optional)</span>
+              </label>
+              <input
+                type="text"
+                name="remarks"
+                placeholder="e.g. Expedited batch for finishing"
+                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              />
+            </div>
+          </div>
+
+          {/* ROW 4: SUBMIT BUTTON */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={!isFormValid || isPending}
+              className={`w-full h-12 rounded-lg text-xs font-bold uppercase tracking-wider shadow-xs transition-all flex items-center justify-center gap-2 ${
+                !isFormValid || isPending
+                  ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
+                  : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer"
+              }`}
+            >
+              {isPending ? (
+                <span>Recording Handover...</span>
+              ) : (
+                <>
+                  <ArrowRight className="w-4 h-4 text-emerald-400" />
+                  <span>Transfer {fromDept} → {toDept}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* 3. FULL-WIDTH TRANSFER ENTRIES LOG */}
+      <div className="bg-white border border-zinc-200 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-950">Internal Transfer Log</h3>
+            <p className="text-xs text-zinc-500">
+{!isUnrestricted && userDept
+                ? `Showing inbound and outbound material movements for ${userDept} workstation`
+                : "Chronological history of room-to-room material handovers across all workstations"}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold bg-zinc-100 px-2.5 py-1 rounded text-zinc-700">
+              {filteredLog.length} Transfers
+            </span>
+          </div>
+        </div>
+
+        {/* Filter Toolbar: Department Pills (Admin/Fabric Incharge) & Search Bar */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          {/* Admin / Fabric Incharge Department Tabs */}
+          {isUnrestricted ? (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+              <button
+                type="button"
+                onClick={() => setLogDeptFilter("ALL")}
+                className={`h-8 px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                  logDeptFilter === "ALL"
+                    ? "bg-zinc-900 text-white"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                }`}
+              >
+                All Departments
+              </button>
+              {WORKSTATION_DEPARTMENTS.map((dept) => (
+                <button
+                  key={dept}
+                  type="button"
+                  onClick={() => setLogDeptFilter(dept)}
+                  className={`h-8 px-2.5 rounded-lg text-xs font-mono whitespace-nowrap transition-colors cursor-pointer ${
+                    logDeptFilter === dept
+                      ? "bg-zinc-900 text-white"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  }`}
+                >
+                  {dept}
+                </button>
+              ))}
+            </div>
+          ) : (
+            userDept && (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold px-2.5 py-1 rounded bg-amber-50 text-amber-900 border border-amber-200">
+                  <Filter className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Scoped to: {userDept} Handover Log</span>
+                </span>
+              </div>
+            )
+          )}
+
+          {/* Search Box */}
+          <div className="relative min-w-[260px]">
+            <input
+              type="text"
+              value={searchLog}
+              onChange={(e) => setSearchLog(e.target.value)}
+              placeholder="Search transfer #, party, lot, room, operator..."
+              className="w-full h-9 pl-8 pr-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 focus:bg-white"
+            />
+            <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5 pointer-events-none" />
+          </div>
+        </div>
+
+        {/* Transfer Entries Table (Desktop >= 768px) */}
+        <div className="hidden md:block overflow-x-auto">
+          {filteredLog.length === 0 ? (
+            <div className="p-8 text-center bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-zinc-400 text-xs">
+              No workstation transfers match your current filter criteria.
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-zinc-200 text-zinc-500 uppercase tracking-wider text-[10px] font-mono bg-zinc-50/50">
+                  <th className="py-2.5 px-3">Transfer # & Date</th>
+                  <th className="py-2.5 px-3">Party & Lot</th>
+                  <th className="py-2.5 px-3">Route (From → To)</th>
+                  <th className="py-2.5 px-3">Fabric Specification</th>
+                  <th className="py-2.5 px-3 text-right">Quantity</th>
+                  <th className="py-2.5 px-3">Machine / Operator</th>
+                  <th className="py-2.5 px-3">Notes</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filteredLog.map((t) => (
+                  <tr key={t.id} className="hover:bg-zinc-50/70 transition-colors">
+                    <td className="py-3 px-3">
+                      <div className="font-mono font-bold text-zinc-900">{t.transferNumber}</div>
+                      <div className="text-[10px] font-mono text-zinc-400">
+                        {new Date(t.transferDate).toLocaleDateString()}
+                      </div>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <div className="font-semibold text-zinc-900 truncate max-w-[160px]">
+                        {t.party?.name || "Party"}
+                      </div>
+                      {t.inward?.partyChallanNo && (
+                        <div className="text-[10px] font-mono text-zinc-500">
+                          Challan #{t.inward.partyChallanNo}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <div className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold">
+                        <span className="px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">
                           {t.fromDepartment}
                         </span>
                         <ArrowRight className="w-3 h-3 text-zinc-400" />
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
                           {t.toDepartment}
                         </span>
                       </div>
+                    </td>
 
-                      <div className="text-right">
-                        <span className="font-mono font-bold text-zinc-900 text-xs">
-                          {Number(t.quantity).toFixed(2)} {t.unit === "PIECES" ? "pcs" : t.unit === "YARDS" ? "yd" : "m"}
-                        </span>
-                      </div>
-                    </div>
+                    <td className="py-3 px-3">
+                      <span className="text-zinc-700 truncate block max-w-[180px]">
+                        {t.fabricDescription}
+                      </span>
+                    </td>
 
-                    {(t.machineNumber || t.operatorName || t.remarks) && (
-                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500 pt-0.5">
-                        {t.machineNumber && (
-                          <span className="bg-zinc-100 px-1.5 py-0.5 rounded font-mono">
-                            {t.machineNumber}
-                          </span>
-                        )}
-                        {t.operatorName && (
-                          <span>Operator: {t.operatorName}</span>
-                        )}
-                        {t.remarks && (
-                          <span className="italic text-zinc-400">"{t.remarks}"</span>
-                        )}
+                    <td className="py-3 px-3 text-right">
+                      <span className="font-mono font-bold text-zinc-900">
+                        {Number(t.quantity).toFixed(2)}
+                      </span>
+                      <span className="text-[10px] font-mono text-zinc-500 ml-1">
+                        {t.unit === "PIECES" ? "pcs" : t.unit === "YARDS" ? "yd" : "m"}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <div className="text-zinc-800 text-[11px]">
+                        {t.operatorName || "-"}
                       </div>
-                    )}
-                  </div>
-                ))
-              )}
+                      {t.machineNumber && (
+                        <div className="text-[10px] font-mono text-zinc-500">
+                          {t.machineNumber}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-3">
+                      <span className="text-zinc-500 italic text-[11px] truncate block max-w-[160px]">
+                        {t.remarks || "-"}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-3 text-right">
+                      <button
+                        type="button"
+                        title="Void Transfer"
+                        disabled={deletePendingId === t.id}
+                        onClick={() => handleDeleteTransfer(t.id, t.transferNumber)}
+                        className="p-1 rounded text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Transfer Entries Cards (Mobile < 768px) */}
+        <div className="block md:hidden space-y-3">
+          {filteredLog.length === 0 ? (
+            <div className="p-6 text-center bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-zinc-400 text-xs">
+              No workstation transfers match your current filter.
             </div>
-          </div>
+          ) : (
+            filteredLog.map((t) => (
+              <div
+                key={t.id}
+                className="p-3.5 border border-zinc-200 rounded-lg bg-white shadow-2xs space-y-2.5"
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-zinc-900 bg-zinc-100 px-2 py-0.5 rounded">
+                      {t.transferNumber}
+                    </span>
+                    <span className="font-semibold text-zinc-800 truncate max-w-[160px]">
+                      {t.party?.name || "Party"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    title="Void Transfer"
+                    disabled={deletePendingId === t.id}
+                    onClick={() => handleDeleteTransfer(t.id, t.transferNumber)}
+                    className="p-1 rounded text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-zinc-100">
+                  <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold">
+                    <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700">
+                      {t.fromDepartment}
+                    </span>
+                    <ArrowRight className="w-3 h-3 text-zinc-400" />
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      {t.toDepartment}
+                    </span>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="font-mono font-bold text-zinc-900 text-xs">
+                      {Number(t.quantity).toFixed(2)} {t.unit === "PIECES" ? "pcs" : t.unit === "YARDS" ? "yd" : "m"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-0.5">
+                  <span>{new Date(t.transferDate).toLocaleDateString()}</span>
+                  <span>{t.operatorName ? `Operator: ${t.operatorName}` : ""}</span>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

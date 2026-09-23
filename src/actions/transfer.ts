@@ -87,6 +87,18 @@ export async function createDepartmentTransferAction(
     return { error: "Source and destination departments cannot be the same." };
   }
 
+  // Enforce origin department lock for department incharges
+  const isUnrestricted =
+    session.role === "ADMIN" ||
+    session.role === "FABRIC_PROCESSING_INCHARGE" ||
+    !session.department;
+
+  if (!isUnrestricted && session.department && fromDepartment !== session.department) {
+    return {
+      error: `Access Denied: You are assigned to ${session.department}. You can only transfer fabric FROM ${session.department}.`,
+    };
+  }
+
   // Calculate current available quantity at fromDepartment for this lot/party
   const lotWhere: any = { partyId };
   if (inwardItemId) {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { createUserAction, toggleUserStatusAction, updatePasswordAction, AdminActionState } from "@/actions/admin";
-import { UserPlus, UserCheck, UserX, Key, Shield, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
+import { createUserAction, toggleUserStatusAction, updatePasswordAction, updateUserDepartmentAction, AdminActionState } from "@/actions/admin";
+import { UserPlus, UserCheck, UserX, Key, Shield, CheckCircle2, AlertTriangle, RefreshCw, Building2 } from "lucide-react";
 
 interface UserItem {
   id: string;
@@ -10,8 +10,29 @@ interface UserItem {
   username: string;
   password: string;
   role: string;
+  department?: string | null;
   isActive: boolean;
   createdAt: Date;
+}
+
+function getDepartmentBadge(dept?: string | null) {
+  if (!dept) return "bg-zinc-100 text-zinc-600 border border-zinc-200";
+  switch (dept) {
+    case "STORE":
+      return "bg-amber-50 text-amber-900 border border-amber-200";
+    case "EMBROIDERY":
+      return "bg-purple-50 text-purple-900 border border-purple-200";
+    case "CROPPING":
+      return "bg-teal-50 text-teal-900 border border-teal-200";
+    case "CUTTING":
+      return "bg-blue-50 text-blue-900 border border-blue-200";
+    case "FINISHING":
+      return "bg-pink-50 text-pink-900 border border-pink-200";
+    case "PACKAGING":
+      return "bg-emerald-50 text-emerald-900 border border-emerald-200";
+    default:
+      return "bg-zinc-100 text-zinc-700 border border-zinc-200";
+  }
 }
 
 function getRoleBadge(role: string) {
@@ -69,6 +90,15 @@ export default function UserManagement({
     if (res.message) setFeedback(res.message);
     setEditingUserId(null);
     setNewPasswordVal("");
+    setIsUpdating(false);
+  };
+
+  const handleUpdateDepartment = async (userId: string, dept: string) => {
+    setIsUpdating(true);
+    setFeedback(null);
+    const res = await updateUserDepartmentAction(userId, dept || null);
+    if (res.error) setFeedback(res.error);
+    if (res.message) setFeedback(res.message);
     setIsUpdating(false);
   };
 
@@ -162,6 +192,28 @@ export default function UserManagement({
               </select>
             </div>
 
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Assigned Workstation (Department)
+              </label>
+              <select
+                name="department"
+                defaultValue=""
+                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-md text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 focus:border-zinc-900"
+              >
+                <option value="">-- Plant-Wide / All Departments --</option>
+                <option value="STORE">STORE (Raw & Fabric Store)</option>
+                <option value="EMBROIDERY">EMBROIDERY (Machines)</option>
+                <option value="CROPPING">CROPPING (Trimming)</option>
+                <option value="CUTTING">CUTTING (Panels)</option>
+                <option value="FINISHING">FINISHING (QC & Pressing)</option>
+                <option value="PACKAGING">PACKAGING (Boxes & Bundles)</option>
+              </select>
+              <span className="text-[10px] text-zinc-400 block mt-1">
+                Department incharge will be locked to their workstation on the floor.
+              </span>
+            </div>
+
             <button
               type="submit"
               disabled={isCreating}
@@ -232,6 +284,23 @@ export default function UserManagement({
                       <span className="font-mono font-bold text-zinc-900 bg-amber-50 text-amber-900 px-1.5 py-0.5 rounded border border-amber-200">
                         {user.password}
                       </span>
+                    </div>
+                    <div className="col-span-2 mt-1">
+                      <span className="text-zinc-400 block text-[10px] uppercase font-mono mb-1">Workstation (Department)</span>
+                      <select
+                        value={user.department || ""}
+                        disabled={isUpdating}
+                        onChange={(e) => handleUpdateDepartment(user.id, e.target.value)}
+                        className={`w-full h-8 px-2 text-xs rounded border bg-white text-zinc-800 ${getDepartmentBadge(user.department)}`}
+                      >
+                        <option value="">Plant-Wide (All Workstations)</option>
+                        <option value="STORE">STORE</option>
+                        <option value="EMBROIDERY">EMBROIDERY</option>
+                        <option value="CROPPING">CROPPING</option>
+                        <option value="CUTTING">CUTTING</option>
+                        <option value="FINISHING">FINISHING</option>
+                        <option value="PACKAGING">PACKAGING</option>
+                      </select>
                     </div>
                   </div>
 
@@ -304,6 +373,7 @@ export default function UserManagement({
                   <th className="py-2.5 px-3">Full Name</th>
                   <th className="py-2.5 px-3">Username</th>
                   <th className="py-2.5 px-3">Role</th>
+                  <th className="py-2.5 px-3">Workstation</th>
                   <th className="py-2.5 px-3">Password / PIN (Visible)</th>
                   <th className="py-2.5 px-3">Status</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
@@ -320,6 +390,22 @@ export default function UserManagement({
                         <span className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded ${getRoleBadge(user.role)}`}>
                           {user.role}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <select
+                          value={user.department || ""}
+                          disabled={isUpdating}
+                          onChange={(e) => handleUpdateDepartment(user.id, e.target.value)}
+                          className={`h-7 px-2 text-[11px] font-medium rounded border bg-white focus:outline-hidden focus:ring-1 focus:ring-zinc-900 ${getDepartmentBadge(user.department)}`}
+                        >
+                          <option value="">Plant-Wide</option>
+                          <option value="STORE">STORE</option>
+                          <option value="EMBROIDERY">EMBROIDERY</option>
+                          <option value="CROPPING">CROPPING</option>
+                          <option value="CUTTING">CUTTING</option>
+                          <option value="FINISHING">FINISHING</option>
+                          <option value="PACKAGING">PACKAGING</option>
+                        </select>
                       </td>
                       <td className="py-2.5 px-3">
                         {editingUserId === user.id ? (

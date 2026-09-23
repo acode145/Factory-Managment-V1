@@ -21,6 +21,7 @@ const CreateUserSchema = z.object({
     "GATE_CLERK",
     "FABRIC_PROCESSING_INCHARGE",
   ]),
+  department: z.string().optional(),
 });
 
 export type AdminActionState = {
@@ -43,6 +44,7 @@ export async function createUserAction(
     username: formData.get("username"),
     password: formData.get("password"),
     role: formData.get("role"),
+    department: formData.get("department") || undefined,
   };
 
   const parsed = CreateUserSchema.safeParse(rawData);
@@ -50,7 +52,7 @@ export async function createUserAction(
     return { error: parsed.error.issues[0].message };
   }
 
-  const { fullName, username, password, role } = parsed.data;
+  const { fullName, username, password, role, department } = parsed.data;
 
   // Check unique username
   const existing = await prisma.user.findUnique({
@@ -67,6 +69,7 @@ export async function createUserAction(
       username,
       password, // Visible per admin requirement
       role,
+      department: department && department.trim() ? department.trim() : null,
       isActive: true,
     },
   });
@@ -117,4 +120,27 @@ export async function updatePasswordAction(userId: string, newPassword: string):
 
   revalidatePath("/admin");
   return { success: true, message: "Password updated successfully." };
+}
+
+export async function updateUserDepartmentAction(
+  userId: string,
+  department: string | null
+): Promise<AdminActionState> {
+  const session = await requireAuth();
+  if (session.role !== "ADMIN") {
+    return { error: "Access denied." };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return { error: "User not found." };
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { department: department && department.trim() ? department.trim() : null },
+  });
+
+  revalidatePath("/admin");
+  return { success: true, message: `Updated workstation department for ${user.fullName}.` };
 }

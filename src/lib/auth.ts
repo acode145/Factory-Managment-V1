@@ -8,6 +8,7 @@ export interface SessionData {
   userId: string;
   username: string;
   role: "ADMIN" | "STOREKEEPER" | "FLOOR_SUPERVISOR" | "GATE_CLERK" | "FABRIC_PROCESSING_INCHARGE";
+  department?: string | null;
   fullName: string;
   createdAt: number;
 }
@@ -22,12 +23,14 @@ export async function createSession(user: {
   id: string;
   username: string;
   role: string;
+  department?: string | null;
   fullName: string;
 }) {
   const sessionData: SessionData = {
     userId: user.id,
     username: user.username,
     role: user.role as SessionData["role"],
+    department: user.department || null,
     fullName: user.fullName,
     createdAt: Date.now(),
   };

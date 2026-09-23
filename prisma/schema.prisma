@@ -11,7 +11,8 @@ model User {
   fullName         String
   username         String            @unique
   password         String            // Stored visible/plain-accessible per admin requirement
-  role             String            @default("STOREKEEPER") // ADMIN, STOREKEEPER, FLOOR_SUPERVISOR, GATE_CLERK
+  role             String            @default("STOREKEEPER") // ADMIN, STOREKEEPER, FLOOR_SUPERVISOR, GATE_CLERK, FABRIC_PROCESSING_INCHARGE
+  department       String?           // STORE, EMBROIDERY, CROPPING, CUTTING, FINISHING, PACKAGING
   isActive         Boolean           @default(true)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt

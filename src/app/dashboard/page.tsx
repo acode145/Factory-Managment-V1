@@ -533,6 +533,7 @@ export default async function DashboardPage({
             inwards={inwardList}
             transfers={transfers}
             batches={batches}
+            currentUser={{ role: session.role, department: session.department }}
           />
         )}
 

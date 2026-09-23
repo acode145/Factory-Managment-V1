@@ -45,6 +45,7 @@ export async function loginAction(prevState: LoginState | null, formData: FormDa
     id: user.id,
     username: user.username,
     role: user.role,
+    department: user.department,
     fullName: user.fullName,
   });
 

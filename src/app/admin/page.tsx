@@ -22,6 +22,7 @@ export default async function AdminPage() {
         username: true,
         password: true,
         role: true,
+        department: true,
         isActive: true,
         createdAt: true,
       },
