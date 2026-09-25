@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { InwardReceiptItem } from "./EditInwardModal";
 import { metersToYards, formatDualUnits } from "@/lib/units";
+import { formatPakistanDate } from "@/lib/dateUtils";
 import {
   Search,
   Filter,
@@ -169,7 +170,7 @@ export default function InwardReceiptsDirectory({
                         <td className="py-3 px-4 whitespace-nowrap">
                           <div className="font-mono font-bold text-zinc-950">{item.igpNumber}</div>
                           <div className="text-zinc-400 text-[11px]">
-                            {new Date(item.challanDate || item.createdAt).toLocaleDateString("en-GB")}
+                            {formatPakistanDate(item.challanDate || item.createdAt)}
                           </div>
                         </td>
 
@@ -278,7 +279,7 @@ export default function InwardReceiptsDirectory({
                       <span className="font-mono font-bold text-zinc-950 text-sm">{item.igpNumber}</span>
                     </div>
                     <span className="text-zinc-400 text-xs font-mono">
-                      {new Date(item.challanDate || item.createdAt).toLocaleDateString("en-GB")}
+                      {formatPakistanDate(item.challanDate || item.createdAt)}
                     </span>
                   </div>
 

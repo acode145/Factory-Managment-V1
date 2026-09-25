@@ -8,6 +8,7 @@ import {
 } from "@/actions/fabric";
 import DatePicker from "@/components/ui/DatePicker";
 import { metersToYards, yardsToMeters } from "@/lib/units";
+import { formatPakistanDate } from "@/lib/dateUtils";
 import {
   Send,
   RotateCcw,
@@ -1101,7 +1102,7 @@ export default function OutsourceBatchManager({
 
                     <div className="pt-2 flex items-center justify-between border-t border-amber-200/60">
                       <span className="text-[11px] text-zinc-500 font-mono">
-                        Dispatched {new Date(batch.sentDate).toLocaleDateString("en-GB")}
+                        Dispatched {formatPakistanDate(batch.sentDate)}
                       </span>
 
                       <button

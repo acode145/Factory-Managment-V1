@@ -13,6 +13,7 @@ import {
   WorkstationDepartment,
 } from "@/lib/workstations";
 import DatePicker from "@/components/ui/DatePicker";
+import { formatPakistanDate, getPakistanTodayIso } from "@/lib/dateUtils";
 import {
   GitFork,
   ArrowRight,
@@ -173,7 +174,7 @@ export default function WorkstationManager({
   const [transferQty, setTransferQty] = useState("");
   const [fabricDesc, setFabricDesc] = useState("");
   const [activeUnit, setActiveUnit] = useState<"METERS" | "YARDS" | "PIECES">("METERS");
-  const [transferDate, setTransferDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [transferDate, setTransferDate] = useState(() => getPakistanTodayIso());
   const [searchLog, setSearchLog] = useState("");
   const [logDeptFilter, setLogDeptFilter] = useState<string>("ALL");
 
@@ -660,7 +661,7 @@ export default function WorkstationManager({
                       {Number(t.quantity).toFixed(2)} {t.unit === "PIECES" ? "pcs" : "m"}
                     </span>
                     <span className="text-[10px] font-mono text-zinc-400">
-                      {new Date(t.transferDate).toLocaleDateString()}
+                      {formatPakistanDate(t.transferDate)}
                     </span>
                   </div>
                 </div>
@@ -1057,7 +1058,7 @@ export default function WorkstationManager({
                     <td className="py-3 px-3">
                       <div className="font-mono font-bold text-zinc-900">{t.transferNumber}</div>
                       <div className="text-[10px] font-mono text-zinc-400">
-                        {new Date(t.transferDate).toLocaleDateString()}
+                        {formatPakistanDate(t.transferDate)}
                       </div>
                     </td>
 
@@ -1207,7 +1208,7 @@ export default function WorkstationManager({
 
                 <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-0.5">
                   <div className="flex items-center gap-2">
-                    <span>{new Date(t.transferDate).toLocaleDateString()}</span>
+                    <span>{formatPakistanDate(t.transferDate)}</span>
                     {t.status === "PENDING" && (
                       <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono font-bold">
                         PENDING

@@ -13,6 +13,7 @@ function generateCode(prefix: string) {
 
 import { WORKSTATION_DEPARTMENTS, WorkstationDepartment } from "@/lib/workstations";
 import { metersToYards } from "@/lib/units";
+import { parsePakistanDate } from "@/lib/dateUtils";
 
 const TransferSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
@@ -201,7 +202,7 @@ export async function createDepartmentTransferAction(
   }
 
   const transferNumber = generateCode("TRF");
-  const effectiveDate = transferDate ? new Date(transferDate) : new Date();
+  const effectiveDate = parsePakistanDate(transferDate);
 
   // Transfers involving EMBROIDERY start as PENDING for two-way physical acceptance handshake
   const involvesEmbroidery = fromDepartment === "EMBROIDERY" || toDepartment === "EMBROIDERY";

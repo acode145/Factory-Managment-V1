@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Calendar } from "lucide-react";
+import { getPakistanTodayIso } from "@/lib/dateUtils";
 
 interface DatePickerProps {
   name: string;
@@ -57,7 +58,7 @@ export default function DatePicker({
   const isControlled = value !== undefined;
   const initialIso =
     normalizeToIso(isControlled ? value : defaultValue) ||
-    new Date().toISOString().split("T")[0];
+    getPakistanTodayIso();
 
   const [isoDate, setIsoDate] = useState<string>(initialIso);
   const [displayText, setDisplayText] = useState<string>(toDisplayFormat(initialIso));

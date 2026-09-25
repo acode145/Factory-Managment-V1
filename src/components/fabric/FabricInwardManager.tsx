@@ -5,6 +5,7 @@ import FabricInwardForm from "./FabricInwardForm";
 import InwardReceiptsDirectory from "./InwardReceiptsDirectory";
 import EditInwardModal, { InwardReceiptItem } from "./EditInwardModal";
 import { metersToYards } from "@/lib/units";
+import { formatPakistanDate } from "@/lib/dateUtils";
 import {
   Clock,
   PlusCircle,
@@ -102,7 +103,7 @@ export default function FabricInwardManager({ parties, inwardList }: FabricInwar
                       <div className="flex items-center justify-between font-mono">
                         <span className="font-bold text-zinc-950 text-xs sm:text-sm">{item.igpNumber}</span>
                         <span className="text-zinc-400 text-[11px]">
-                          {new Date(item.challanDate || item.createdAt).toLocaleDateString("en-GB")}
+                          {formatPakistanDate(item.challanDate || item.createdAt)}
                         </span>
                       </div>
 

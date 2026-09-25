@@ -26,6 +26,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { PartyOption, InwardLotOption, TransferLogItem } from "./WorkstationManager";
+import { formatPakistanDate } from "@/lib/dateUtils";
 
 export default function EmbroideryFloorManager({
   parties = [],
@@ -408,7 +409,7 @@ export default function EmbroideryFloorManager({
                         {t.transferNumber}
                       </span>
                       <span className="text-[10px] font-mono text-zinc-500">
-                        {new Date(t.transferDate).toLocaleDateString()}
+                        {formatPakistanDate(t.transferDate)}
                       </span>
                     </div>
                     <div className="text-sm font-bold text-zinc-900 mt-1">
@@ -869,7 +870,7 @@ export default function EmbroideryFloorManager({
                       <td className="py-3 px-3">
                         <div className="font-mono font-bold text-zinc-900">{t.transferNumber}</div>
                         <div className="text-[10px] font-mono text-zinc-400">
-                          {new Date(t.transferDate).toLocaleDateString()}
+                          {formatPakistanDate(t.transferDate)}
                         </div>
                       </td>
 

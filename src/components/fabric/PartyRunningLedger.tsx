@@ -13,6 +13,7 @@ import {
   Repeat,
 } from "lucide-react";
 import { metersToYards, yardsToMeters } from "@/lib/units";
+import { formatPakistanDate } from "@/lib/dateUtils";
 
 export interface LedgerEntry {
   id: string;
@@ -491,7 +492,7 @@ export default function PartyRunningLedger({
                   return (
                     <tr key={entry.id} className="hover:bg-zinc-50/70 transition-colors">
                       <td className="py-2.5 px-3 text-zinc-500 whitespace-nowrap">
-                        {new Date(entry.timestamp).toLocaleDateString("en-GB")}
+                        {formatPakistanDate(entry.timestamp)}
                       </td>
                       <td className="py-2.5 px-3 font-bold text-zinc-900 whitespace-nowrap">
                         {entry.referenceNumber}
@@ -640,7 +641,7 @@ export default function PartyRunningLedger({
                   return (
                     <tr key={entry.id} className="hover:bg-zinc-50/70 transition-colors">
                       <td className="py-2.5 px-3 text-zinc-500 whitespace-nowrap">
-                        {new Date(entry.timestamp).toLocaleDateString("en-GB")}
+                        {formatPakistanDate(entry.timestamp)}
                       </td>
                       <td className="py-2.5 px-3 font-bold text-zinc-900 whitespace-nowrap">
                         {entry.referenceNumber}
@@ -760,7 +761,7 @@ export default function PartyRunningLedger({
                     </span>
                   </div>
                   <span className="text-[10px] text-zinc-400 font-mono">
-                    {new Date(entry.timestamp).toLocaleDateString("en-GB")}
+                    {formatPakistanDate(entry.timestamp)}
                   </span>
                 </div>
 
