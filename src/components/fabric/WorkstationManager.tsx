@@ -12,6 +12,7 @@ import {
   WORKSTATION_DEPARTMENTS,
   WorkstationDepartment,
 } from "@/lib/workstations";
+import DatePicker from "@/components/ui/DatePicker";
 import {
   GitFork,
   ArrowRight,
@@ -106,6 +107,14 @@ const DEPT_LABELS: Record<WorkstationDepartment, string> = {
   PACKAGING: "Packaging & Boxes",
 };
 
+export const INTERNAL_WORKSTATION_DEPARTMENTS: WorkstationDepartment[] = [
+  "STORE",
+  "CROPPING",
+  "CUTTING",
+  "FINISHING",
+  "PACKAGING",
+];
+
 export default function WorkstationManager({
   parties = [],
   inwards = [],
@@ -146,7 +155,7 @@ export default function WorkstationManager({
 
   // Initialize fromDept based on user role
   const [fromDept, setFromDept] = useState<WorkstationDepartment>(() => {
-    if (!isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)) {
+    if (!isUnrestricted && userDept && INTERNAL_WORKSTATION_DEPARTMENTS.includes(userDept)) {
       return userDept;
     }
     return "STORE";
@@ -155,10 +164,10 @@ export default function WorkstationManager({
   // Initialize toDept ensuring it is different from fromDept
   const [toDept, setToDept] = useState<WorkstationDepartment>(() => {
     const initialFrom =
-      !isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)
+      !isUnrestricted && userDept && INTERNAL_WORKSTATION_DEPARTMENTS.includes(userDept)
         ? userDept
         : "STORE";
-    return WORKSTATION_DEPARTMENTS.find((d) => d !== initialFrom) || "EMBROIDERY";
+    return INTERNAL_WORKSTATION_DEPARTMENTS.find((d) => d !== initialFrom) || "CROPPING";
   });
 
   const [transferQty, setTransferQty] = useState("");
@@ -170,10 +179,10 @@ export default function WorkstationManager({
 
   // Keep fromDept locked for department incharges
   useEffect(() => {
-    if (!isUnrestricted && userDept && WORKSTATION_DEPARTMENTS.includes(userDept)) {
+    if (!isUnrestricted && userDept && INTERNAL_WORKSTATION_DEPARTMENTS.includes(userDept)) {
       setFromDept(userDept);
       if (toDept === userDept) {
-        const next = WORKSTATION_DEPARTMENTS.find((d) => d !== userDept) || "STORE";
+        const next = INTERNAL_WORKSTATION_DEPARTMENTS.find((d) => d !== userDept) || "STORE";
         setToDept(next);
       }
     }
@@ -183,9 +192,17 @@ export default function WorkstationManager({
   const handleFromDeptChange = (newFrom: WorkstationDepartment) => {
     setFromDept(newFrom);
     if (newFrom === toDept) {
-      const next = WORKSTATION_DEPARTMENTS.find((d) => d !== newFrom) || "EMBROIDERY";
+      const next = INTERNAL_WORKSTATION_DEPARTMENTS.find((d) => d !== newFrom) || "CROPPING";
       setToDept(next);
     }
+  };
+
+  const handlePartyChange = (partyId: string) => {
+    setSelectedPartyId(partyId);
+    setSelectedInwardId("");
+    setSelectedInwardItemId("");
+    setFabricDesc("");
+    setTransferQty("");
   };
 
   useEffect(() => {
@@ -445,33 +462,16 @@ export default function WorkstationManager({
                 <span>Live Workstation Pipeline & Room Balances</span>
               </h2>
               <p className="text-xs text-zinc-500">
-                Plant-wide fabric inventory across all workstations
+                Plant-wide fabric inventory across internal workstations for:{" "}
+                <strong className="text-zinc-800">
+                  {safeParties.find((p) => p.id === selectedPartyId)?.name || "Client Party"}
+                </strong>
               </p>
-            </div>
-
-            {/* Party Quick Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500 font-medium">Party:</span>
-              <select
-                value={selectedPartyId}
-                onChange={(e) => {
-                  setSelectedPartyId(e.target.value);
-                  setSelectedInwardId("");
-                  setSelectedInwardItemId("");
-                }}
-                className="h-8 px-2.5 bg-white border border-zinc-300 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              >
-                {safeParties.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.code})
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {WORKSTATION_DEPARTMENTS.map((dept) => {
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {INTERNAL_WORKSTATION_DEPARTMENTS.map((dept) => {
               const Icon = DEPT_ICONS[dept];
               const qty = deptBalances[dept];
               const isSource = fromDept === dept;
@@ -552,24 +552,12 @@ export default function WorkstationManager({
                 </div>
               </div>
 
-              {/* Party Switcher */}
+              {/* Active Party Indicator */}
               <div className="flex items-center gap-2 self-start sm:self-auto">
-                <span className="text-xs text-zinc-400 font-medium">Party:</span>
-                <select
-                  value={selectedPartyId}
-                  onChange={(e) => {
-                    setSelectedPartyId(e.target.value);
-                    setSelectedInwardId("");
-                    setSelectedInwardItemId("");
-                  }}
-                  className="h-9 px-3 bg-zinc-800 border border-zinc-700 rounded-lg text-xs font-semibold text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-400"
-                >
-                  {safeParties.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
+                <span className="text-xs text-zinc-400 font-medium">Active Party:</span>
+                <span className="text-xs font-semibold text-zinc-200 bg-zinc-800 px-3 py-1.5 rounded-lg border border-zinc-700">
+                  {safeParties.find((p) => p.id === selectedPartyId)?.name || "Select in Form Below"}
+                </span>
               </div>
             </div>
 
@@ -728,24 +716,57 @@ export default function WorkstationManager({
         </div>
 
         <form action={formAction} className="space-y-4">
-          <input type="hidden" name="partyId" value={selectedPartyId} />
-          <input type="hidden" name="inwardId" value={selectedInwardId} />
-          <input type="hidden" name="inwardItemId" value={selectedInwardItemId} />
           <input type="hidden" name="fabricDescription" value={fabricDesc || "General Fabric"} />
           <input type="hidden" name="unit" value={activeUnit} />
-          <input type="hidden" name="transferDate" value={transferDate} />
 
-          {/* ROW 1: INWARD LOT & FABRIC SELECTION (3 Columns) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* ROW 1: DATE, PARTY, CHALLAN & LOT ITEM (4 Columns) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. DATE SELECTOR (dd/mm/yyyy) */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Transfer Date *
+              </label>
+              <DatePicker
+                name="transferDate"
+                value={transferDate}
+                onChange={(val) => setTransferDate(val)}
+                required
+                className="w-full"
+              />
+            </div>
+
+            {/* 2. CLIENT PARTY */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
+                Client Party *
+              </label>
+              <select
+                name="partyId"
+                required
+                value={selectedPartyId}
+                onChange={(e) => handlePartyChange(e.target.value)}
+                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              >
+                <option value="">-- Select Party --</option>
+                {safeParties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 3. INWARD CHALLAN / ORIGINATING LOT */}
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
                 Inward Challan / Originating Lot *
               </label>
               <select
+                name="inwardId"
                 required
                 value={selectedInwardId}
                 onChange={(e) => handleInwardChange(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               >
                 <option value="">-- Select Inward Challan --</option>
                 {partyInwards.map((inv) => (
@@ -756,15 +777,17 @@ export default function WorkstationManager({
               </select>
             </div>
 
+            {/* 4. SPECIFIC LOT ITEM */}
             <div>
               <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
                 Specific Lot Item {currentInward && currentInward.items && currentInward.items.length > 1 ? "*" : "(Optional)"}
               </label>
               <select
+                name="inwardItemId"
                 disabled={!currentInward || !currentInward.items || currentInward.items.length <= 1}
                 value={selectedInwardItemId}
                 onChange={(e) => handleLotChange(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-50 disabled:text-zinc-400"
+                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-50 disabled:text-zinc-400"
               >
                 <option value="">
                   {currentInward && currentInward.items && currentInward.items.length > 1
@@ -779,20 +802,6 @@ export default function WorkstationManager({
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wider mb-1">
-                Fabric Specification & Unit
-              </label>
-              <div className="h-10 px-3 bg-zinc-50 border border-zinc-200 rounded-lg flex items-center justify-between text-xs font-medium text-zinc-800">
-                <span className="truncate max-w-[200px]">
-                  {fabricDesc || "Select inward lot"}
-                </span>
-                <span className="font-mono text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-700">
-                  {activeUnit}
-                </span>
-              </div>
             </div>
           </div>
 
@@ -811,9 +820,9 @@ export default function WorkstationManager({
             </div>
           )}
 
-          {/* ROW 2: ROUTING, QUANTITY & DATE (4 Columns) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-zinc-50/70 rounded-xl border border-zinc-200">
-            {/* FROM DEPARTMENT */}
+          {/* ROW 2: ROUTING & QUANTITY (3 Columns) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-zinc-50/70 rounded-xl border border-zinc-200">
+            {/* 5. FROM DEPARTMENT */}
             <div>
               <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
                 From Department *
@@ -821,7 +830,7 @@ export default function WorkstationManager({
               {!isUnrestricted && userDept ? (
                 // Locked for Department Incharge
                 <div>
-                  <div className="h-10 px-3 bg-zinc-100 border border-zinc-300 rounded-lg flex items-center justify-between text-xs font-bold text-zinc-900">
+                  <div className="h-11 px-3 bg-zinc-100 border border-zinc-300 rounded-lg flex items-center justify-between text-xs font-bold text-zinc-900">
                     <span className="flex items-center gap-1.5 font-mono">
                       <Lock className="w-3.5 h-3.5 text-zinc-500" />
                       {userDept}
@@ -831,14 +840,14 @@ export default function WorkstationManager({
                   <input type="hidden" name="fromDepartment" value={userDept} />
                 </div>
               ) : (
-                // Dropdown for Admin and Fabric Processing Incharge
+                // Dropdown for Admin and Fabric Processing Incharge (5 Internal Departments)
                 <select
                   name="fromDepartment"
                   value={fromDept}
                   onChange={(e) => handleFromDeptChange(e.target.value as WorkstationDepartment)}
-                  className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                  className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                 >
-                  {WORKSTATION_DEPARTMENTS.map((dept) => (
+                  {INTERNAL_WORKSTATION_DEPARTMENTS.map((dept) => (
                     <option key={dept} value={dept}>
                       {dept} ({deptBalances[dept].toFixed(1)})
                     </option>
@@ -850,7 +859,7 @@ export default function WorkstationManager({
               </span>
             </div>
 
-            {/* TO DEPARTMENT */}
+            {/* 6. TO DEPARTMENT */}
             <div>
               <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
                 To Department *
@@ -859,20 +868,20 @@ export default function WorkstationManager({
                 name="toDepartment"
                 value={toDept}
                 onChange={(e) => setToDept(e.target.value as WorkstationDepartment)}
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+                className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               >
-                {WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept).map((dept) => (
+                {INTERNAL_WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept).map((dept) => (
                   <option key={dept} value={dept}>
                     {dept} ({DEPT_LABELS[dept]})
                   </option>
                 ))}
               </select>
               <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                Receiving workstation
+                Receiving internal workstation
               </span>
             </div>
 
-            {/* TRANSFER QUANTITY */}
+            {/* 7. QUANTITY */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider">
@@ -896,7 +905,7 @@ export default function WorkstationManager({
                 value={transferQty}
                 onChange={(e) => setTransferQty(e.target.value)}
                 placeholder={`Max ${availableAtSource.toFixed(2)}`}
-                className={`w-full h-10 px-3 bg-white border rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 ${
+                className={`w-full h-11 px-3 bg-white border rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 ${
                   isOverQty
                     ? "border-rose-400 focus:ring-rose-500 bg-rose-50/20 text-rose-950"
                     : "border-zinc-300 focus:ring-zinc-900"
@@ -908,62 +917,9 @@ export default function WorkstationManager({
                 </p>
               )}
             </div>
-
-            {/* TRANSFER DATE */}
-            <div>
-              <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-1">
-                Transfer Date *
-              </label>
-              <input
-                type="date"
-                required
-                value={transferDate}
-                onChange={(e) => setTransferDate(e.target.value)}
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
           </div>
 
-          {/* ROW 3: OPTIONAL METADATA (3 Columns) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
-                Machine # <span className="font-normal lowercase text-zinc-400">(optional)</span>
-              </label>
-              <input
-                type="text"
-                name="machineNumber"
-                placeholder="e.g. Machine 04 / Frame B"
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
-                Operator / Floor Incharge <span className="font-normal lowercase text-zinc-400">(optional)</span>
-              </label>
-              <input
-                type="text"
-                name="operatorName"
-                placeholder="e.g. Aslam Khan"
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-1">
-                Batch Notes <span className="font-normal lowercase text-zinc-400">(optional)</span>
-              </label>
-              <input
-                type="text"
-                name="remarks"
-                placeholder="e.g. Expedited batch for finishing"
-                className="w-full h-10 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-              />
-            </div>
-          </div>
-
-          {/* ROW 4: SUBMIT BUTTON */}
+          {/* SUBMIT BUTTON */}
           <div className="pt-2">
             <button
               type="submit"
@@ -1022,7 +978,7 @@ export default function WorkstationManager({
               >
                 All Departments
               </button>
-              {WORKSTATION_DEPARTMENTS.map((dept) => (
+              {INTERNAL_WORKSTATION_DEPARTMENTS.map((dept) => (
                 <button
                   key={dept}
                   type="button"
