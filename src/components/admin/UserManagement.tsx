@@ -22,12 +22,12 @@ function getDepartmentBadge(dept?: string | null) {
       return "bg-amber-50 text-amber-900 border border-amber-200";
     case "EMBROIDERY":
       return "bg-purple-50 text-purple-900 border border-purple-200";
+    case "CROPPING_AND_CUTTING":
     case "CROPPING":
-      return "bg-teal-50 text-teal-900 border border-teal-200";
     case "CUTTING":
       return "bg-blue-50 text-blue-900 border border-blue-200";
+    case "FINISHING_AND_PACKAGING":
     case "FINISHING":
-      return "bg-pink-50 text-pink-900 border border-pink-200";
     case "PACKAGING":
       return "bg-emerald-50 text-emerald-900 border border-emerald-200";
     default:
@@ -203,11 +203,9 @@ export default function UserManagement({
               >
                 <option value="">-- Plant-Wide / All Departments --</option>
                 <option value="STORE">STORE (Raw & Fabric Store)</option>
-                <option value="EMBROIDERY">EMBROIDERY (Machines)</option>
-                <option value="CROPPING">CROPPING (Trimming)</option>
-                <option value="CUTTING">CUTTING (Panels)</option>
-                <option value="FINISHING">FINISHING (QC & Pressing)</option>
-                <option value="PACKAGING">PACKAGING (Boxes & Bundles)</option>
+                <option value="EMBROIDERY">EMBROIDERY (Machines Floor)</option>
+                <option value="CROPPING_AND_CUTTING">CROPPING & CUTTING (Prep & Cutting Tables)</option>
+                <option value="FINISHING_AND_PACKAGING">FINISHING & PACKAGING (QC, Press & Packing)</option>
               </select>
               <span className="text-[10px] text-zinc-400 block mt-1">
                 Department incharge will be locked to their workstation on the floor.
@@ -296,10 +294,8 @@ export default function UserManagement({
                         <option value="">Plant-Wide (All Workstations)</option>
                         <option value="STORE">STORE</option>
                         <option value="EMBROIDERY">EMBROIDERY</option>
-                        <option value="CROPPING">CROPPING</option>
-                        <option value="CUTTING">CUTTING</option>
-                        <option value="FINISHING">FINISHING</option>
-                        <option value="PACKAGING">PACKAGING</option>
+                        <option value="CROPPING_AND_CUTTING">CROPPING & CUTTING</option>
+                        <option value="FINISHING_AND_PACKAGING">FINISHING & PACKAGING</option>
                       </select>
                     </div>
                   </div>
@@ -401,10 +397,8 @@ export default function UserManagement({
                           <option value="">Plant-Wide</option>
                           <option value="STORE">STORE</option>
                           <option value="EMBROIDERY">EMBROIDERY</option>
-                          <option value="CROPPING">CROPPING</option>
-                          <option value="CUTTING">CUTTING</option>
-                          <option value="FINISHING">FINISHING</option>
-                          <option value="PACKAGING">PACKAGING</option>
+                          <option value="CROPPING_AND_CUTTING">CROPPING & CUTTING</option>
+                          <option value="FINISHING_AND_PACKAGING">FINISHING & PACKAGING</option>
                         </select>
                       </td>
                       <td className="py-2.5 px-3">

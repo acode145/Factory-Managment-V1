@@ -263,6 +263,12 @@ model DepartmentTransfer {
   acceptedAt        DateTime?
   rejectionReason   String?
 
+  // Cutting Transformation Fields
+  isCuttingTransformation Boolean         @default(false)
+  piecesProduced          Int?
+  scrapMeters             Decimal?        @db.Decimal(10, 2)
+  scrapNotes              String?
+
   transferDate      DateTime          @default(now())
   createdAt         DateTime          @default(now())
 

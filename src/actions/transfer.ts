@@ -12,8 +12,9 @@ function generateCode(prefix: string) {
 }
 
 import { WORKSTATION_DEPARTMENTS, WorkstationDepartment } from "@/lib/workstations";
-import { metersToYards } from "@/lib/units";
+import { metersToYards, yardsToMeters } from "@/lib/units";
 import { parsePakistanDate } from "@/lib/dateUtils";
+import { reconcilePartyLedger } from "@/actions/fabric";
 
 const TransferSchema = z.object({
   partyId: z.string().min(1, "Party is required"),
@@ -33,6 +34,10 @@ const TransferSchema = z.object({
   operatorName: z.string().trim().optional(),
   remarks: z.string().trim().optional(),
   transferDate: z.string().optional(),
+  isCuttingTransformation: z.coerce.boolean().default(false),
+  piecesProduced: z.coerce.number().int().positive("Pieces produced must be greater than 0").optional(),
+  scrapMeters: z.coerce.number().min(0).default(0),
+  scrapNotes: z.string().trim().optional(),
 });
 
 export type TransferActionState = {
@@ -61,6 +66,10 @@ export async function createDepartmentTransferAction(
     operatorName: formData.get("operatorName") || undefined,
     remarks: formData.get("remarks") || undefined,
     transferDate: formData.get("transferDate") || undefined,
+    isCuttingTransformation: formData.get("isCuttingTransformation") === "true",
+    piecesProduced: formData.get("piecesProduced") || undefined,
+    scrapMeters: formData.get("scrapMeters") || 0,
+    scrapNotes: formData.get("scrapNotes") || undefined,
   };
 
   const parsed = TransferSchema.safeParse(rawData);
@@ -82,6 +91,10 @@ export async function createDepartmentTransferAction(
     operatorName,
     remarks,
     transferDate,
+    isCuttingTransformation,
+    piecesProduced,
+    scrapMeters,
+    scrapNotes,
   } = parsed.data;
 
   if (fromDepartment === toDepartment) {
@@ -93,6 +106,22 @@ export async function createDepartmentTransferAction(
     return {
       error: "Access Denied: Fabric can only be transferred to Embroidery from the Store department.",
     };
+  }
+
+  // Cutting transformation validations
+  if (isCuttingTransformation) {
+    if (fromDepartment !== "CROPPING_AND_CUTTING") {
+      return { error: "Cutting transformation can only be performed from Cropping & Cutting." };
+    }
+    if (toDepartment !== "FINISHING_AND_PACKAGING") {
+      return { error: "Cut pieces must be transferred to Finishing & Packaging." };
+    }
+    if (!piecesProduced || piecesProduced <= 0) {
+      return { error: "Please enter the number of finished pieces produced." };
+    }
+    if (scrapMeters >= quantity) {
+      return { error: "Cutting scrap cannot be equal to or greater than the total fabric consumed." };
+    }
   }
 
   // Enforce origin department lock for department incharges
@@ -123,6 +152,9 @@ export async function createDepartmentTransferAction(
       quantity: true,
       damagedQuantity: true,
       status: true,
+      isCuttingTransformation: true,
+      piecesProduced: true,
+      unit: true,
     },
   });
 
@@ -136,7 +168,14 @@ export async function createDepartmentTransferAction(
 
     // Material only enters a department if the transfer was ACCEPTED
     if (t.toDepartment === fromDepartment && t.status === "ACCEPTED") {
-      qtyIntoFromDept += q;
+      // If destination was FINISHING_AND_PACKAGING from a cut transformation, pieces entered
+      if (t.isCuttingTransformation && t.piecesProduced) {
+        if (unit === "PIECES") {
+          qtyIntoFromDept += Number(t.piecesProduced);
+        }
+      } else {
+        qtyIntoFromDept += q;
+      }
     }
     // Material leaves a department if dispatched (PENDING or ACCEPTED). Rejected transfers do not deduct.
     if (t.fromDepartment === fromDepartment && t.status !== "REJECTED") {
@@ -204,44 +243,144 @@ export async function createDepartmentTransferAction(
   const transferNumber = generateCode("TRF");
   const effectiveDate = parsePakistanDate(transferDate);
 
-  // Transfers involving EMBROIDERY start as PENDING for two-way physical acceptance handshake
+  // Transfers involving EMBROIDERY start as PENDING for two-way physical acceptance handshake.
+  // Internal floor transfers (Cropping & Cutting <-> Finishing & Packaging, or to Store) are auto-accepted.
   const involvesEmbroidery = fromDepartment === "EMBROIDERY" || toDepartment === "EMBROIDERY";
   const initialStatus = involvesEmbroidery ? "PENDING" : "ACCEPTED";
 
   try {
-    await prisma.departmentTransfer.create({
-      data: {
-        transferNumber,
-        partyId,
-        inwardId: inwardId || null,
-        inwardItemId: inwardItemId || null,
-        fabricDescription,
-        unit,
-        quantity,
-        damagedQuantity,
-        fromDepartment,
-        toDepartment,
-        machineNumber: machineNumber || null,
-        operatorName: operatorName || null,
-        remarks: remarks || null,
-        status: initialStatus,
-        acceptedById: initialStatus === "ACCEPTED" ? session.userId : null,
-        acceptedAt: initialStatus === "ACCEPTED" ? effectiveDate : null,
-        transferredById: session.userId,
-        transferDate: effectiveDate,
-      },
-    });
+    if (isCuttingTransformation && piecesProduced) {
+      const netMeters = Number((quantity - scrapMeters).toFixed(2));
+      const stdDebit = unit === "YARDS" ? yardsToMeters(netMeters) : netMeters;
+      const stdScrap = unit === "YARDS" ? yardsToMeters(scrapMeters) : scrapMeters;
 
-    revalidatePath("/dashboard");
+      let partyChallanNo: string | null = null;
+      if (inwardId) {
+        const inv = await prisma.fabricInward.findUnique({
+          where: { id: inwardId },
+          select: { partyChallanNo: true },
+        });
+        partyChallanNo = inv?.partyChallanNo || null;
+      }
 
-    const successMessage = involvesEmbroidery
-      ? `Handover #${transferNumber} dispatched: Sent ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}. (Awaiting receiver physical acceptance)`
-      : `Transfer #${transferNumber} logged: Moved ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}.`;
+      await prisma.$transaction(async (tx) => {
+        // 1. Create Department Transfer Record (Auto-accepted)
+        await tx.departmentTransfer.create({
+          data: {
+            transferNumber,
+            partyId,
+            inwardId: inwardId || null,
+            inwardItemId: inwardItemId || null,
+            fabricDescription,
+            unit,
+            quantity,
+            damagedQuantity,
+            fromDepartment: "CROPPING_AND_CUTTING",
+            toDepartment: "FINISHING_AND_PACKAGING",
+            machineNumber: machineNumber || null,
+            operatorName: operatorName || null,
+            remarks: remarks || `Cut Transformation: ${quantity} ${unit} -> ${piecesProduced} pcs (Scrap: ${scrapMeters} ${unit})`,
+            status: "ACCEPTED",
+            isCuttingTransformation: true,
+            piecesProduced,
+            scrapMeters,
+            scrapNotes: scrapNotes || null,
+            acceptedById: session.userId,
+            acceptedAt: effectiveDate,
+            transferredById: session.userId,
+            transferDate: effectiveDate,
+          },
+        });
 
-    return {
-      success: true,
-      message: successMessage,
-    };
+        // 2. Create Continuous Fabric Ledger Entry (Debit consumed fabric + record cutting scrap)
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId,
+            partyChallanNo,
+            inwardId: inwardId || null,
+            inwardItemId: inwardItemId || null,
+            itemCategory: "CONTINUOUS",
+            fabricDescription,
+            unit,
+            movementType: "ADJUSTMENT",
+            referenceNumber: transferNumber,
+            creditMeters: 0,
+            debitMeters: stdDebit,
+            shrinkageMeters: stdScrap,
+            runningBalance: 0,
+            timestamp: effectiveDate,
+            notes: `Cut Transformation #${transferNumber} in Cropping & Cutting: Converted ${netMeters.toFixed(2)}${unit === "YARDS" ? "yd" : "m"} into ${piecesProduced} pcs${scrapMeters > 0 ? ` [Cutting Scrap: ${scrapMeters.toFixed(2)}${unit === "YARDS" ? "yd" : "m"}${scrapNotes ? ` - ${scrapNotes}` : ""}]` : ""}`,
+          },
+        });
+
+        // 3. Create Pieces Ledger Entry (Credit pieces produced into customer pieces custody)
+        await tx.fabricLedgerEntry.create({
+          data: {
+            partyId,
+            partyChallanNo,
+            inwardId: inwardId || null,
+            inwardItemId: inwardItemId || null,
+            itemCategory: "PIECES",
+            fabricDescription,
+            unit: "PIECES",
+            movementType: "ADJUSTMENT",
+            referenceNumber: transferNumber,
+            creditPieces: piecesProduced,
+            debitPieces: 0,
+            shortagePieces: 0,
+            runningPieces: 0,
+            timestamp: effectiveDate,
+            notes: `Cut Transformation #${transferNumber}: Produced ${piecesProduced} pcs from ${quantity.toFixed(2)}${unit === "YARDS" ? "yd" : "m"} cut roll (Cropping & Cutting -> Finishing & Packaging)`,
+          },
+        });
+
+        // 4. Reconcile both continuous and pieces streams in party running ledger
+        await reconcilePartyLedger(tx, partyId);
+      });
+
+      revalidatePath("/dashboard");
+      revalidatePath("/ledger");
+
+      return {
+        success: true,
+        message: `Cut Transformation #${transferNumber} complete: ${quantity} ${unit} cut into ${piecesProduced} pieces and transferred to Finishing & Packaging.`,
+      };
+    } else {
+      await prisma.departmentTransfer.create({
+        data: {
+          transferNumber,
+          partyId,
+          inwardId: inwardId || null,
+          inwardItemId: inwardItemId || null,
+          fabricDescription,
+          unit,
+          quantity,
+          damagedQuantity,
+          fromDepartment,
+          toDepartment,
+          machineNumber: machineNumber || null,
+          operatorName: operatorName || null,
+          remarks: remarks || null,
+          status: initialStatus,
+          acceptedById: initialStatus === "ACCEPTED" ? session.userId : null,
+          acceptedAt: initialStatus === "ACCEPTED" ? effectiveDate : null,
+          transferredById: session.userId,
+          transferDate: effectiveDate,
+        },
+      });
+
+      revalidatePath("/dashboard");
+      revalidatePath("/ledger");
+
+      const successMessage = involvesEmbroidery
+        ? `Handover #${transferNumber} dispatched: Sent ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}. (Awaiting receiver physical acceptance)`
+        : `Transfer #${transferNumber} logged: Moved ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}.`;
+
+      return {
+        success: true,
+        message: successMessage,
+      };
+    }
   } catch (err: any) {
     console.error("Department transfer error:", err);
     return { error: err.message || "Failed to record department transfer." };
@@ -363,11 +502,29 @@ export async function deleteDepartmentTransferAction(
       return { error: "Transfer record not found." };
     }
 
-    await prisma.departmentTransfer.delete({
-      where: { id: transferId },
-    });
+    if (existing.isCuttingTransformation) {
+      await prisma.$transaction(async (tx) => {
+        // Rollback associated ledger entries created by this cut transformation
+        await tx.fabricLedgerEntry.deleteMany({
+          where: { referenceNumber: existing.transferNumber },
+        });
+
+        // Delete the transfer record
+        await tx.departmentTransfer.delete({
+          where: { id: transferId },
+        });
+
+        // Reconcile party ledger running balances
+        await reconcilePartyLedger(tx, existing.partyId);
+      });
+    } else {
+      await prisma.departmentTransfer.delete({
+        where: { id: transferId },
+      });
+    }
 
     revalidatePath("/dashboard");
+    revalidatePath("/ledger");
 
     return {
       success: true,
