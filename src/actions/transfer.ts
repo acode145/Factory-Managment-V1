@@ -87,6 +87,13 @@ export async function createDepartmentTransferAction(
     return { error: "Source and destination departments cannot be the same." };
   }
 
+  // Strictly enforce: only STORE can send fabric to EMBROIDERY
+  if (toDepartment === "EMBROIDERY" && fromDepartment !== "STORE") {
+    return {
+      error: "Access Denied: Fabric can only be transferred to Embroidery from the Store department.",
+    };
+  }
+
   // Enforce origin department lock for department incharges
   const isUnrestricted =
     session.role === "ADMIN" ||

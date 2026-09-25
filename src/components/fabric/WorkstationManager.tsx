@@ -181,21 +181,32 @@ export default function WorkstationManager({
   useEffect(() => {
     if (!isUnrestricted && userDept && INTERNAL_WORKSTATION_DEPARTMENTS.includes(userDept)) {
       setFromDept(userDept);
-      if (toDept === userDept) {
+      if (toDept === userDept || (userDept !== "STORE" && toDept === "EMBROIDERY")) {
         const next = INTERNAL_WORKSTATION_DEPARTMENTS.find((d) => d !== userDept) || "STORE";
         setToDept(next);
       }
     }
   }, [isUnrestricted, userDept, toDept]);
 
-  // Ensure toDept does not collide with fromDept
+  // Ensure toDept does not collide with fromDept or invalid destination
   const handleFromDeptChange = (newFrom: WorkstationDepartment) => {
     setFromDept(newFrom);
-    if (newFrom === toDept) {
+    if (newFrom === toDept || (newFrom !== "STORE" && toDept === "EMBROIDERY")) {
       const next = INTERNAL_WORKSTATION_DEPARTMENTS.find((d) => d !== newFrom) || "CROPPING";
       setToDept(next);
     }
   };
+
+  // Allowed destination departments:
+  // - If fromDept is STORE: internal departments (Cropping, Cutting, Finishing, Packaging) + EMBROIDERY
+  // - If fromDept is NOT STORE: only other internal departments (only Store can send to Embroidery)
+  const allowedToDepartments = useMemo(() => {
+    const list: WorkstationDepartment[] = INTERNAL_WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept);
+    if (fromDept === "STORE") {
+      list.unshift("EMBROIDERY");
+    }
+    return list;
+  }, [fromDept]);
 
   const handlePartyChange = (partyId: string) => {
     setSelectedPartyId(partyId);
@@ -870,14 +881,16 @@ export default function WorkstationManager({
                 onChange={(e) => setToDept(e.target.value as WorkstationDepartment)}
                 className="w-full h-11 px-3 bg-white border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
               >
-                {INTERNAL_WORKSTATION_DEPARTMENTS.filter((d) => d !== fromDept).map((dept) => (
+                {allowedToDepartments.map((dept) => (
                   <option key={dept} value={dept}>
                     {dept} ({DEPT_LABELS[dept]})
                   </option>
                 ))}
               </select>
               <span className="text-[10px] text-zinc-500 font-mono block mt-1">
-                Receiving internal workstation
+                {toDept === "EMBROIDERY"
+                  ? "Awaiting physical acceptance in Embroidery floor"
+                  : "Receiving internal workstation"}
               </span>
             </div>
 
