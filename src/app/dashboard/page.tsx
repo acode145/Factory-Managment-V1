@@ -20,9 +20,11 @@ import {
   Building2,
   AlertTriangle,
   GitFork,
+  Cpu,
 } from "lucide-react";
 import Link from "next/link";
 import WorkstationManager from "@/components/fabric/WorkstationManager";
+import EmbroideryFloorManager from "@/components/fabric/EmbroideryFloorManager";
 
 export default async function DashboardPage({
   searchParams,
@@ -117,6 +119,7 @@ export default async function DashboardPage({
         party: { select: { name: true, code: true } },
         inward: { select: { partyChallanNo: true } },
         transferredBy: { select: { fullName: true } },
+        acceptedBy: { select: { fullName: true } },
       },
     }),
   ]);
@@ -181,6 +184,11 @@ export default async function DashboardPage({
     machineNumber: t.machineNumber,
     operatorName: t.operatorName,
     remarks: t.remarks,
+    status: t.status || "ACCEPTED",
+    acceptedById: t.acceptedById || null,
+    acceptedAt: t.acceptedAt ? (t.acceptedAt instanceof Date ? t.acceptedAt.toISOString() : String(t.acceptedAt)) : null,
+    rejectionReason: t.rejectionReason || null,
+    acceptedBy: t.acceptedBy || null,
     transferDate: t.transferDate instanceof Date ? t.transferDate.toISOString() : String(t.transferDate),
     transferredBy: t.transferredBy,
     party: t.party,
@@ -489,6 +497,18 @@ export default async function DashboardPage({
           </Link>
 
           <Link
+            href="/dashboard?tab=embroidery"
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
+              tab === "embroidery"
+                ? "bg-zinc-900 text-white shadow-xs"
+                : "bg-white text-zinc-600 hover:text-zinc-950 border border-zinc-200"
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            <span>Embroidery</span>
+          </Link>
+
+          <Link
             href="/dashboard?tab=parties"
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
               tab === "parties"
@@ -529,6 +549,16 @@ export default async function DashboardPage({
 
         {tab === "workstations" && (
           <WorkstationManager
+            parties={partyBalances}
+            inwards={inwardList}
+            transfers={transfers}
+            batches={batches}
+            currentUser={{ role: session.role, department: session.department }}
+          />
+        )}
+
+        {tab === "embroidery" && (
+          <EmbroideryFloorManager
             parties={partyBalances}
             inwards={inwardList}
             transfers={transfers}

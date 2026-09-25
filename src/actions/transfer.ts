@@ -114,6 +114,7 @@ export async function createDepartmentTransferAction(
       toDepartment: true,
       quantity: true,
       damagedQuantity: true,
+      status: true,
     },
   });
 
@@ -125,10 +126,12 @@ export async function createDepartmentTransferAction(
     const q = Number(t.quantity);
     const d = Number(t.damagedQuantity || 0);
 
-    if (t.toDepartment === fromDepartment) {
+    // Material only enters a department if the transfer was ACCEPTED
+    if (t.toDepartment === fromDepartment && t.status === "ACCEPTED") {
       qtyIntoFromDept += q;
     }
-    if (t.fromDepartment === fromDepartment) {
+    // Material leaves a department if dispatched (PENDING or ACCEPTED). Rejected transfers do not deduct.
+    if (t.fromDepartment === fromDepartment && t.status !== "REJECTED") {
       qtyOutOfFromDept += (q + d);
     }
   }
@@ -193,6 +196,10 @@ export async function createDepartmentTransferAction(
   const transferNumber = generateCode("TRF");
   const effectiveDate = transferDate ? new Date(transferDate) : new Date();
 
+  // Transfers involving EMBROIDERY start as PENDING for two-way physical acceptance handshake
+  const involvesEmbroidery = fromDepartment === "EMBROIDERY" || toDepartment === "EMBROIDERY";
+  const initialStatus = involvesEmbroidery ? "PENDING" : "ACCEPTED";
+
   try {
     await prisma.departmentTransfer.create({
       data: {
@@ -209,6 +216,9 @@ export async function createDepartmentTransferAction(
         machineNumber: machineNumber || null,
         operatorName: operatorName || null,
         remarks: remarks || null,
+        status: initialStatus,
+        acceptedById: initialStatus === "ACCEPTED" ? session.userId : null,
+        acceptedAt: initialStatus === "ACCEPTED" ? effectiveDate : null,
         transferredById: session.userId,
         transferDate: effectiveDate,
       },
@@ -216,13 +226,118 @@ export async function createDepartmentTransferAction(
 
     revalidatePath("/dashboard");
 
+    const successMessage = involvesEmbroidery
+      ? `Handover #${transferNumber} dispatched: Sent ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}. (Awaiting receiver physical acceptance)`
+      : `Transfer #${transferNumber} logged: Moved ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}.`;
+
     return {
       success: true,
-      message: `Transfer #${transferNumber} logged: Moved ${quantity} ${unit} from ${fromDepartment} to ${toDepartment}.`,
+      message: successMessage,
     };
   } catch (err: any) {
     console.error("Department transfer error:", err);
     return { error: err.message || "Failed to record department transfer." };
+  }
+}
+
+export async function acceptDepartmentTransferAction(
+  transferId: string
+): Promise<TransferActionState> {
+  const session = await requireAuth();
+
+  try {
+    const transfer = await prisma.departmentTransfer.findUnique({
+      where: { id: transferId },
+    });
+
+    if (!transfer) {
+      return { error: "Transfer record not found." };
+    }
+
+    if (transfer.status === "ACCEPTED") {
+      return { error: "Transfer has already been accepted." };
+    }
+
+    // Role check: Admin, Fabric Processing Incharge, or user matching receiving department
+    const isUnrestricted =
+      session.role === "ADMIN" ||
+      session.role === "FABRIC_PROCESSING_INCHARGE";
+
+    if (!isUnrestricted && session.department && session.department !== transfer.toDepartment) {
+      return {
+        error: `Access Denied: You are assigned to ${session.department}. Only ${transfer.toDepartment} incharge can accept this handover.`,
+      };
+    }
+
+    await prisma.departmentTransfer.update({
+      where: { id: transferId },
+      data: {
+        status: "ACCEPTED",
+        acceptedById: session.userId,
+        acceptedAt: new Date(),
+      },
+    });
+
+    revalidatePath("/dashboard");
+
+    return {
+      success: true,
+      message: `Transfer #${transfer.transferNumber} confirmed & accepted into ${transfer.toDepartment} custody.`,
+    };
+  } catch (err: any) {
+    console.error("Accept transfer error:", err);
+    return { error: err.message || "Failed to accept transfer." };
+  }
+}
+
+export async function rejectDepartmentTransferAction(
+  transferId: string,
+  reason?: string
+): Promise<TransferActionState> {
+  const session = await requireAuth();
+
+  try {
+    const transfer = await prisma.departmentTransfer.findUnique({
+      where: { id: transferId },
+    });
+
+    if (!transfer) {
+      return { error: "Transfer record not found." };
+    }
+
+    if (transfer.status === "ACCEPTED") {
+      return { error: "Cannot reject a transfer that has already been accepted." };
+    }
+
+    const isUnrestricted =
+      session.role === "ADMIN" ||
+      session.role === "FABRIC_PROCESSING_INCHARGE";
+
+    if (!isUnrestricted && session.department && session.department !== transfer.toDepartment) {
+      return {
+        error: `Access Denied: You are assigned to ${session.department}. Only ${transfer.toDepartment} incharge can reject this handover.`,
+      };
+    }
+
+    await prisma.departmentTransfer.update({
+      where: { id: transferId },
+      data: {
+        status: "REJECTED",
+        rejectionReason: reason || "Rejected by receiver on physical intake",
+        acceptedById: session.userId,
+        acceptedAt: new Date(),
+      },
+    });
+
+    revalidatePath("/dashboard");
+
+    return {
+      success: true,
+      message: `Transfer #${transfer.transferNumber} rejected. Material returned to ${transfer.fromDepartment}.`,
+    };
+  } catch (err: any) {
+    console.error("Reject transfer error:", err);
+    return { error: err.message || "Failed to reject transfer." };
   }
 }
 

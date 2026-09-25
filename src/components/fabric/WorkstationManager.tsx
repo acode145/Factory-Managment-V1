@@ -4,6 +4,8 @@ import { useActionState, useState, useEffect, useMemo } from "react";
 import {
   createDepartmentTransferAction,
   deleteDepartmentTransferAction,
+  acceptDepartmentTransferAction,
+  rejectDepartmentTransferAction,
   TransferActionState,
 } from "@/actions/transfer";
 import {
@@ -26,6 +28,9 @@ import {
   Trash2,
   Lock,
   Filter,
+  Clock,
+  XCircle,
+  ArrowDownLeft,
 } from "lucide-react";
 
 export interface TransferLogItem {
@@ -43,6 +48,11 @@ export interface TransferLogItem {
   machineNumber?: string | null;
   operatorName?: string | null;
   remarks?: string | null;
+  status?: string;
+  acceptedById?: string | null;
+  acceptedAt?: string | Date | null;
+  rejectionReason?: string | null;
+  acceptedBy?: { fullName: string } | null;
   transferDate: string | Date;
   transferredBy?: { fullName: string } | null;
   party?: { name: string; code: string } | null;
@@ -250,6 +260,34 @@ export default function WorkstationManager({
     }
   };
 
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const handleConfirmAccept = async (transferId: string, transferNo: string) => {
+    setAcceptingId(transferId);
+    setActionFeedback(null);
+    try {
+      const res = await acceptDepartmentTransferAction(transferId);
+      if (res.error) setActionFeedback({ type: "error", text: res.error });
+      if (res.message) setActionFeedback({ type: "success", text: res.message });
+    } finally {
+      setAcceptingId(null);
+    }
+  };
+
+  const handleReject = async (transferId: string, transferNo: string) => {
+    const reason = window.prompt(`Enter reason for rejecting transfer #${transferNo} (material will return to sender):`);
+    if (reason === null) return;
+    setActionFeedback(null);
+    try {
+      const res = await rejectDepartmentTransferAction(transferId, reason);
+      if (res.error) setActionFeedback({ type: "error", text: res.error });
+      if (res.message) setActionFeedback({ type: "success", text: res.message });
+    } catch (e: any) {
+      setActionFeedback({ type: "error", text: e.message || "Failed to reject transfer." });
+    }
+  };
+
   const handleDeleteTransfer = async (id: string, transferNo: string) => {
     if (
       !window.confirm(
@@ -259,10 +297,13 @@ export default function WorkstationManager({
       return;
     }
     setDeletePendingId(id);
+    setActionFeedback(null);
     try {
       const res = await deleteDepartmentTransferAction(id);
       if (res?.error) {
-        alert(res.error);
+        setActionFeedback({ type: "error", text: res.error });
+      } else if (res?.message) {
+        setActionFeedback({ type: "success", text: res.message });
       }
     } finally {
       setDeletePendingId(null);
@@ -275,6 +316,13 @@ export default function WorkstationManager({
       setTransferQty("");
     }
   }, [state]);
+
+  // Compute pending returns from Embroidery into Store awaiting Storekeeper acceptance
+  const pendingInboundToStore = useMemo(() => {
+    return safeTransfers.filter(
+      (t) => t && t.toDepartment === "STORE" && t.status === "PENDING"
+    );
+  }, [safeTransfers]);
 
   // Compute live balance at each workstation for the active Party & Lot selection
   const deptBalances: Record<WorkstationDepartment, number> = {
@@ -310,6 +358,8 @@ export default function WorkstationManager({
   });
 
   for (const t of relevantTransfers) {
+    if (t.status === "REJECTED") continue;
+
     const q = Number(t.quantity);
     const d = Number(t.damagedQuantity || 0);
     const from = t.fromDepartment as WorkstationDepartment;
@@ -318,7 +368,7 @@ export default function WorkstationManager({
     if (deptBalances[from] !== undefined) {
       deptBalances[from] = Math.max(0, Number((deptBalances[from] - q - d).toFixed(2)));
     }
-    if (deptBalances[to] !== undefined) {
+    if (deptBalances[to] !== undefined && (t.status || "ACCEPTED") === "ACCEPTED") {
       deptBalances[to] = Number((deptBalances[to] + q).toFixed(2));
     }
   }
@@ -567,6 +617,92 @@ export default function WorkstationManager({
             </div>
           </div>
         )
+      )}
+
+      {/* PENDING INBOUND INTAKE FOR STORE (FROM EMBROIDERY) */}
+      {(userDept === "STORE" || isUnrestricted) && pendingInboundToStore.length > 0 && (
+        <div className="bg-amber-50/70 border border-amber-300 rounded-xl p-5 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-amber-200">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center">
+                <ArrowDownLeft className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-2">
+                  <span>Inbound Fabric from Embroidery Floor Pending Store Acceptance</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-amber-200 text-amber-950 font-bold">
+                    {pendingInboundToStore.length} Pending
+                  </span>
+                </h3>
+                <p className="text-xs text-amber-900">
+                  Embroidery has finished work and returned fabric to Store. Click Confirm & Accept to officially add to Store inventory.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            {pendingInboundToStore.map((t) => (
+              <div
+                key={t.id}
+                className="p-3.5 rounded-lg border border-amber-200 bg-white shadow-2xs space-y-2.5"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="font-mono font-bold text-xs text-zinc-900 bg-zinc-100 px-2 py-0.5 rounded">
+                      {t.transferNumber}
+                    </span>
+                    <div className="font-bold text-zinc-900 text-xs mt-1">
+                      {t.party?.name} {t.inward?.partyChallanNo ? `• Challan #${t.inward.partyChallanNo}` : ""}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono font-bold text-sm text-zinc-900 block">
+                      {Number(t.quantity).toFixed(2)} {t.unit === "PIECES" ? "pcs" : "m"}
+                    </span>
+                    <span className="text-[10px] font-mono text-zinc-400">
+                      {new Date(t.transferDate).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-xs text-zinc-700 bg-zinc-50 p-2 rounded border border-zinc-100 flex items-center justify-between">
+                  <span className="truncate max-w-[200px]">{t.fabricDescription}</span>
+                  {t.operatorName && (
+                    <span className="text-[10px] text-zinc-500">Operator: {t.operatorName}</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    disabled={acceptingId === t.id}
+                    onClick={() => handleConfirmAccept(t.id, t.transferNumber)}
+                    className="flex-1 h-9 rounded-lg bg-zinc-950 hover:bg-zinc-800 text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {acceptingId === t.id ? (
+                      <span>Accepting...</span>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Confirm & Accept into Store</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={acceptingId === t.id}
+                    onClick={() => handleReject(t.id, t.transferNumber)}
+                    className="h-9 px-3 rounded-lg border border-zinc-300 hover:border-rose-300 hover:bg-rose-50 text-zinc-700 hover:text-rose-700 text-xs font-medium cursor-pointer"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* 2. FULL-WIDTH HANDOVER FORM */}
@@ -940,6 +1076,7 @@ export default function WorkstationManager({
                   <th className="py-2.5 px-3">Route (From → To)</th>
                   <th className="py-2.5 px-3">Fabric Specification</th>
                   <th className="py-2.5 px-3 text-right">Quantity</th>
+                  <th className="py-2.5 px-3">Status</th>
                   <th className="py-2.5 px-3">Machine / Operator</th>
                   <th className="py-2.5 px-3">Notes</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
@@ -991,6 +1128,27 @@ export default function WorkstationManager({
                       <span className="text-[10px] font-mono text-zinc-500 ml-1">
                         {t.unit === "PIECES" ? "pcs" : t.unit === "YARDS" ? "yd" : "m"}
                       </span>
+                    </td>
+
+                    <td className="py-3 px-3">
+                      {(!t.status || t.status === "ACCEPTED") && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>ACCEPTED</span>
+                        </span>
+                      )}
+                      {t.status === "PENDING" && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-300">
+                          <Clock className="w-3 h-3 text-amber-600" />
+                          <span>PENDING</span>
+                        </span>
+                      )}
+                      {t.status === "REJECTED" && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200">
+                          <XCircle className="w-3 h-3 text-rose-600" />
+                          <span>REJECTED</span>
+                        </span>
+                      )}
                     </td>
 
                     <td className="py-3 px-3">
@@ -1079,7 +1237,14 @@ export default function WorkstationManager({
                 </div>
 
                 <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-0.5">
-                  <span>{new Date(t.transferDate).toLocaleDateString()}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{new Date(t.transferDate).toLocaleDateString()}</span>
+                    {t.status === "PENDING" && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono font-bold">
+                        PENDING
+                      </span>
+                    )}
+                  </div>
                   <span>{t.operatorName ? `Operator: ${t.operatorName}` : ""}</span>
                 </div>
               </div>

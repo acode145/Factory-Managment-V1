@@ -23,6 +23,7 @@ model User {
   outsourceReceived OutsourceBatch[] @relation("ReceivedByUser")
   outsourceReturns  OutsourceBatchReturn[] @relation("ReturnReceivedByUser")
   transfersMade     DepartmentTransfer[]   @relation("UserTransfers")
+  transfersAccepted DepartmentTransfer[]   @relation("TransferAcceptor")
 }
 
 model Party {
@@ -255,6 +256,13 @@ model DepartmentTransfer {
 
   transferredById   String
   transferredBy     User              @relation("UserTransfers", fields: [transferredById], references: [id])
+
+  status            String            @default("ACCEPTED") // PENDING, ACCEPTED, REJECTED
+  acceptedById      String?
+  acceptedBy        User?             @relation("TransferAcceptor", fields: [acceptedById], references: [id])
+  acceptedAt        DateTime?
+  rejectionReason   String?
+
   transferDate      DateTime          @default(now())
   createdAt         DateTime          @default(now())
 
@@ -262,4 +270,5 @@ model DepartmentTransfer {
   @@index([fromDepartment])
   @@index([toDepartment])
   @@index([inwardItemId])
+  @@index([status])
 }
