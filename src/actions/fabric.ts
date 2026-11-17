@@ -150,20 +150,68 @@ export async function createPartyInwardAction(
   if (itemsPayloadStr) {
     try {
       const parsedArray = JSON.parse(itemsPayloadStr);
-      if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
-        return { error: "Please add at least one fabric / item row." };
+      if (Array.isArray(parsedArray)) {
+        // Filter out completely blank unused row slots
+        const activeRows = parsedArray.filter((row: any) =>
+          Boolean(
+            (row.fabricType && String(row.fabricType).trim().length > 0) ||
+            (row.colorShade && String(row.colorShade).trim().length > 0) ||
+            (row.challanQty && Number(row.challanQty) > 0) ||
+            (row.measuredQty && Number(row.measuredQty) > 0)
+          )
+        );
+
+        for (let i = 0; i < activeRows.length; i++) {
+          const itemRes = InwardItemSchema.safeParse(activeRows[i]);
+          if (!itemRes.success) {
+            return { error: `Item ${i + 1}: ${itemRes.error.issues[0].message}` };
+          }
+          itemsToCreate.push(itemRes.data);
+        }
       }
-      for (let i = 0; i < parsedArray.length; i++) {
-        const itemRes = InwardItemSchema.safeParse(parsedArray[i]);
+    } catch {
+      return { error: "Invalid items payload format." };
+    }
+  }
+
+  // Fallback to native HTML multi-row form inputs (for older browsers/tablets where JS payload didn't serialize)
+  if (itemsToCreate.length === 0) {
+    const rawFabricTypes = formData.getAll("item_fabricType") as string[];
+    if (rawFabricTypes && rawFabricTypes.length > 0) {
+      const rawColorShades = formData.getAll("item_colorShade") as string[];
+      const rawUnits = formData.getAll("item_unit") as string[];
+      const rawRollCounts = formData.getAll("item_rollCount") as string[];
+      const rawChallanQtys = formData.getAll("item_challanQty") as string[];
+      const rawMeasuredQtys = formData.getAll("item_measuredQty") as string[];
+
+      for (let i = 0; i < rawFabricTypes.length; i++) {
+        const fType = (rawFabricTypes[i] || "").trim();
+        const cShade = (rawColorShades[i] || "").trim();
+        const mQty = rawMeasuredQtys[i] || "";
+        const cQty = rawChallanQtys[i] || "";
+
+        // Skip blank unused slots
+        if (!fType && !cShade && !mQty && !cQty) continue;
+
+        const itemRes = InwardItemSchema.safeParse({
+          fabricType: fType,
+          colorShade: cShade,
+          unit: rawUnits[i] || "METERS",
+          rollCount: rawRollCounts[i],
+          challanQty: cQty,
+          measuredQty: mQty,
+        });
+
         if (!itemRes.success) {
           return { error: `Item ${i + 1}: ${itemRes.error.issues[0].message}` };
         }
         itemsToCreate.push(itemRes.data);
       }
-    } catch {
-      return { error: "Invalid items payload format." };
     }
-  } else {
+  }
+
+  // Single-item fallback
+  if (itemsToCreate.length === 0) {
     const singleRaw = {
       fabricType: formData.get("fabricType"),
       colorShade: formData.get("colorShade"),
@@ -173,10 +221,11 @@ export async function createPartyInwardAction(
       measuredQty: formData.get("measuredMeters") || formData.get("measuredQty"),
     };
     const singleParsed = InwardItemSchema.safeParse(singleRaw);
-    if (!singleParsed.success) {
-      return { error: singleParsed.error.issues[0].message };
+    if (singleParsed.success) {
+      itemsToCreate.push(singleParsed.data);
+    } else {
+      return { error: "Please enter at least one valid fabric item row." };
     }
-    itemsToCreate.push(singleParsed.data);
   }
 
   const { challanDate, partyId, partyChallanNo, driverDetails, remarks } = parsedHeader.data;
@@ -418,11 +467,23 @@ export async function updateFabricInwardAction(
         return { error: "Please add at least one fabric / item row." };
       }
       for (let i = 0; i < parsedArray.length; i++) {
-        const itemRes = InwardItemSchema.safeParse(parsedArray[i]);
+        const raw = parsedArray[i];
+        const fType = typeof raw?.fabricType === "string" ? raw.fabricType.trim() : "";
+        const cShade = typeof raw?.colorShade === "string" ? raw.colorShade.trim() : "";
+        const mQty = raw?.measuredQty !== undefined && raw?.measuredQty !== null ? String(raw.measuredQty).trim() : "";
+        const cQty = raw?.challanQty !== undefined && raw?.challanQty !== null ? String(raw.challanQty).trim() : "";
+
+        // Skip completely blank rows
+        if (!fType && !cShade && !mQty && !cQty) continue;
+
+        const itemRes = InwardItemSchema.safeParse(raw);
         if (!itemRes.success) {
           return { error: `Item ${i + 1}: ${itemRes.error.issues[0].message}` };
         }
         itemsToUpdate.push(itemRes.data);
+      }
+      if (itemsToUpdate.length === 0) {
+        return { error: "Please provide at least one valid fabric / item row." };
       }
     } catch {
       return { error: "Invalid items payload format." };

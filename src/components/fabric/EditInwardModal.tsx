@@ -410,7 +410,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                           </label>
                           <input
                             type="text"
-                            required
                             value={row.fabricType}
                             onChange={(e) => updateRow(row.id, "fabricType", e.target.value)}
                             placeholder="e.g. Lawn 68/68, Cambric"
@@ -425,7 +424,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                           </label>
                           <input
                             type="text"
-                            required
                             value={row.colorShade}
                             onChange={(e) => updateRow(row.id, "colorShade", e.target.value)}
                             placeholder="e.g. Greige, White"
@@ -442,7 +440,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                             type="number"
                             min="1"
                             step="1"
-                            required
                             value={row.rollCount}
                             onChange={(e) => updateRow(row.id, "rollCount", e.target.value)}
                             placeholder="1"
@@ -466,7 +463,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                             type="number"
                             step="any"
                             min="0"
-                            required
                             value={row.challanQty}
                             onChange={(e) => updateRow(row.id, "challanQty", e.target.value)}
                             placeholder={row.unit === "PIECES" ? "e.g. 200" : "e.g. 1000"}
@@ -512,7 +508,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                             type="number"
                             step="any"
                             min="0"
-                            required
                             value={row.measuredQty}
                             onChange={(e) => updateRow(row.id, "measuredQty", e.target.value)}
                             placeholder={row.unit === "PIECES" ? "e.g. 200" : "e.g. 1000"}
@@ -528,10 +523,14 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                 <button
                   type="button"
                   onClick={addRow}
-                  className="w-full h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-semibold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-[0.99] touch-manipulation"
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    addRow();
+                  }}
+                  className="w-full h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-semibold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-[0.99] touch-manipulation select-none"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Add Item Row</span>
+                  <Plus className="w-4 h-4 pointer-events-none" />
+                  <span className="pointer-events-none">Add Item Row</span>
                 </button>
               </div>
             </div>

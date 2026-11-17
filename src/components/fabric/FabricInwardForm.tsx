@@ -54,50 +54,49 @@ export default function FabricInwardForm({
   const [partyChallanNo, setPartyChallanNo] = useState("");
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
+  const createInitialRow = (idx: number): InwardRowState => ({
+    id: `row-${Date.now()}-${idx}-${Math.random().toString(16).slice(2, 6)}`,
+    fabricType: "",
+    colorShade: "",
+    unit: "METERS",
+    rollCount: "1",
+    challanQty: "",
+    measuredQty: "",
+  });
+
+  const [rows, setRows] = useState<InwardRowState[]>([
+    createInitialRow(1),
+    createInitialRow(2),
+    createInitialRow(3),
+  ]);
+
   useEffect(() => {
     if (state?.success) {
-      setRows([
-        {
-          id: 'row-' + Date.now(),
-          fabricType: '',
-          colorShade: '',
-          unit: 'METERS',
-          rollCount: '1',
-          challanQty: '',
-          measuredQty: '',
-        },
-      ]);
+      setRows([createInitialRow(1), createInitialRow(2), createInitialRow(3)]);
       setSelectedPartyId("");
       setPartyChallanNo("");
       setFormKey((k) => k + 1);
+      setSubmitAttempted(false);
     }
   }, [state]);
 
-  const [rows, setRows] = useState<InwardRowState[]>([
-    {
-      id: "row-" + Date.now(),
-      fabricType: "",
-      colorShade: "",
-      unit: "METERS",
-      rollCount: "1",
-      challanQty: "",
-      measuredQty: "",
-    },
-  ]);
-
   const addRow = () => {
-    setRows((prev) => [
-      ...prev,
-      {
-        id: "row-" + Date.now() + "-" + Math.random().toString(16).slice(2, 6),
-        fabricType: "",
-        colorShade: "",
-        unit: "METERS",
-        rollCount: "1",
-        challanQty: "",
-        measuredQty: "",
-      },
-    ]);
+    setRows((prev) => [...prev, createInitialRow(prev.length + 1)]);
+  };
+
+  const setRowCount = (targetCount: number) => {
+    setRows((prev) => {
+      if (targetCount > prev.length) {
+        const added: InwardRowState[] = [];
+        for (let i = prev.length; i < targetCount; i++) {
+          added.push(createInitialRow(i + 1));
+        }
+        return [...prev, ...added];
+      } else if (targetCount < prev.length) {
+        return prev.slice(0, Math.max(1, targetCount));
+      }
+      return prev;
+    });
   };
 
   const removeRow = (id: string) => {
@@ -111,28 +110,42 @@ export default function FabricInwardForm({
     );
   };
 
-  // Compute live multi-row summary aggregates
+  // A row is considered filled/active if fabric type, color, or quantities are entered
+  const isRowPartiallyFilled = (r: InwardRowState) =>
+    Boolean(
+      r.fabricType.trim() ||
+      r.colorShade.trim() ||
+      r.challanQty.trim() ||
+      r.measuredQty.trim() ||
+      (r.rollCount.trim() && r.rollCount !== "1")
+    );
+
+  const activeRows = rows.filter(isRowPartiallyFilled);
+  const rowsToValidate = activeRows.length > 0 ? activeRows : rows.slice(0, 1);
+
+  // Compute live multi-row summary aggregates over filled rows
   let totalRolls = 0;
   let totalContClaimedM = 0;
   let totalContMeasuredM = 0;
   let totalPiecesClaimed = 0;
   let totalPiecesMeasured = 0;
 
-  for (const r of rows) {
-    const rRolls = parseInt(r.rollCount) || 0;
-    totalRolls += rRolls;
-
+  for (const r of rowsToValidate) {
+    const rRolls = parseInt(r.rollCount, 10) || 0;
     const cQty = parseFloat(r.challanQty) || 0;
     const mQty = parseFloat(r.measuredQty) || 0;
 
-    if (r.unit === "PIECES") {
-      totalPiecesClaimed += Math.round(cQty);
-      totalPiecesMeasured += Math.round(mQty);
-    } else {
-      const cMeters = r.unit === "YARDS" ? yardsToMeters(cQty) : cQty;
-      const mMeters = r.unit === "YARDS" ? yardsToMeters(mQty) : mQty;
-      totalContClaimedM += cMeters;
-      totalContMeasuredM += mMeters;
+    if (cQty > 0 || mQty > 0 || r.fabricType.trim()) {
+      totalRolls += rRolls;
+      if (r.unit === "PIECES") {
+        totalPiecesClaimed += Math.round(cQty);
+        totalPiecesMeasured += Math.round(mQty);
+      } else {
+        const cMeters = r.unit === "YARDS" ? yardsToMeters(cQty) : cQty;
+        const mMeters = r.unit === "YARDS" ? yardsToMeters(mQty) : mQty;
+        totalContClaimedM += cMeters;
+        totalContMeasuredM += mMeters;
+      }
     }
   }
 
@@ -152,10 +165,10 @@ export default function FabricInwardForm({
   );
   const selectedParty = parties.find((p) => p.id === selectedPartyId);
 
-  // Strict completeness verification across all added item rows
+  // Strict completeness verification across all active rows
   const isRowsValid =
-    rows.length > 0 &&
-    rows.every((r) => {
+    rowsToValidate.length > 0 &&
+    rowsToValidate.every((r) => {
       const cQty = parseFloat(r.challanQty);
       const mQty = parseFloat(r.measuredQty);
       const rolls = parseInt(r.rollCount, 10);
@@ -173,16 +186,25 @@ export default function FabricInwardForm({
 
   // Identify specific invalid row for clear user feedback
   const invalidRowInfo = (() => {
+    if (activeRows.length === 0) {
+      const r = rows[0];
+      if (!r.fabricType.trim()) return "Lot 1: Enter fabric construction (e.g. Lawn 68/68)";
+      if (!r.colorShade.trim()) return "Lot 1: Enter color or shade";
+      return "Lot 1: Enter claimed and measured quantities";
+    }
+
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      if (!r.fabricType.trim()) return `Row ${i + 1}: Enter fabric construction (e.g. Lawn 68/68)`;
-      if (!r.colorShade.trim()) return `Row ${i + 1}: Enter color or shade`;
+      if (!isRowPartiallyFilled(r)) continue; // Blank slot ignored
+
+      if (!r.fabricType.trim()) return `Lot ${i + 1}: Enter fabric construction (e.g. Lawn 68/68)`;
+      if (!r.colorShade.trim()) return `Lot ${i + 1}: Enter color or shade`;
       const rolls = parseInt(r.rollCount, 10);
-      if (isNaN(rolls) || rolls <= 0) return `Row ${i + 1}: Pack count must be at least 1`;
+      if (isNaN(rolls) || rolls <= 0) return `Lot ${i + 1}: Pack count must be at least 1`;
       const cQty = parseFloat(r.challanQty);
-      if (isNaN(cQty) || cQty <= 0) return `Row ${i + 1}: Enter claimed quantity (> 0)`;
+      if (isNaN(cQty) || cQty <= 0) return `Lot ${i + 1}: Enter claimed quantity (> 0)`;
       const mQty = parseFloat(r.measuredQty);
-      if (isNaN(mQty) || mQty <= 0) return `Row ${i + 1}: Enter measured quantity (> 0)`;
+      if (isNaN(mQty) || mQty <= 0) return `Lot ${i + 1}: Enter measured quantity (> 0)`;
     }
     return null;
   })();
@@ -331,11 +353,36 @@ export default function FabricInwardForm({
         </div>
         {/* Multi-Item Lot Builder Section */}
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-zinc-700" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
-              Inward Items & Lots ({rows.length})
-            </h3>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-2">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-zinc-700" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
+                Inward Items & Lots ({activeRows.length > 0 ? `${activeRows.length} active` : `${rows.length} ready`})
+              </h3>
+            </div>
+
+            {/* Quick Slots Selector (Instant access to 1-8 rows without relying on clicking Add Row) */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-[11px] text-zinc-500 font-medium">Slots:</span>
+              {[1, 2, 3, 4, 5, 8].map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  onClick={() => setRowCount(count)}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    setRowCount(count);
+                  }}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono font-bold transition-all cursor-pointer touch-manipulation ${
+                    rows.length === count
+                      ? "bg-zinc-900 text-white shadow-xs"
+                      : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200"
+                  }`}
+                >
+                  {count} {count === 1 ? "Lot" : "Lots"}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Table / Row cards */}
@@ -371,6 +418,9 @@ export default function FabricInwardForm({
                       <span className="text-xs font-bold text-zinc-800">
                         {row.fabricType || `Item #${index + 1}`}
                         {row.colorShade ? ` • ${row.colorShade}` : ""}
+                        {!isRowPartiallyFilled(row) && index > 0 && (
+                          <span className="text-zinc-400 font-normal text-[11px] ml-1.5">(Optional - leave blank if not used)</span>
+                        )}
                       </span>
                     </div>
 
@@ -400,10 +450,14 @@ export default function FabricInwardForm({
                         <button
                           type="button"
                           onClick={() => removeRow(row.id)}
+                          onTouchEnd={(e) => {
+                            e.preventDefault();
+                            removeRow(row.id);
+                          }}
                           className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
                           title="Remove item row"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5 pointer-events-none" />
                         </button>
                       )}
                     </div>
@@ -418,7 +472,7 @@ export default function FabricInwardForm({
                       </label>
                       <input
                         type="text"
-                        required
+                        name="item_fabricType"
                         value={row.fabricType}
                         onChange={(e) => updateRow(row.id, "fabricType", e.target.value)}
                         placeholder="e.g. Lawn 68/68, Cambric, Sleeves"
@@ -433,7 +487,7 @@ export default function FabricInwardForm({
                       </label>
                       <input
                         type="text"
-                        required
+                        name="item_colorShade"
                         value={row.colorShade}
                         onChange={(e) => updateRow(row.id, "colorShade", e.target.value)}
                         placeholder="e.g. Greige, White, Blue"
@@ -448,9 +502,9 @@ export default function FabricInwardForm({
                       </label>
                       <input
                         type="number"
+                        name="item_rollCount"
                         min="1"
                         step="1"
-                        required
                         value={row.rollCount}
                         onChange={(e) => updateRow(row.id, "rollCount", e.target.value)}
                         placeholder="1"
@@ -472,9 +526,9 @@ export default function FabricInwardForm({
                       </div>
                       <input
                         type="number"
+                        name="item_challanQty"
                         step="any"
                         min="0"
-                        required
                         value={row.challanQty}
                         onChange={(e) => updateRow(row.id, "challanQty", e.target.value)}
                         placeholder={row.unit === "PIECES" ? "e.g. 200" : "e.g. 10000"}
@@ -488,6 +542,7 @@ export default function FabricInwardForm({
                         Unit
                       </label>
                       <select
+                        name="item_unit"
                         value={row.unit}
                         onChange={(e) =>
                           updateRow(
@@ -518,9 +573,9 @@ export default function FabricInwardForm({
                       </div>
                       <input
                         type="number"
+                        name="item_measuredQty"
                         step="any"
                         min="0"
-                        required
                         value={row.measuredQty}
                         onChange={(e) => updateRow(row.id, "measuredQty", e.target.value)}
                         placeholder={row.unit === "PIECES" ? "e.g. 199" : "e.g. 9900"}
@@ -532,15 +587,34 @@ export default function FabricInwardForm({
               );
             })}
 
-            {/* Add Item Row Button - Full Width below last row (Requirement 2) */}
-            <button
-              type="button"
-              onClick={addRow}
-              className="w-full h-11 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs mt-2 touch-manipulation active:scale-[0.99]"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Item Row</span>
-            </button>
+            {/* Add Item Row Buttons (Touch & Click optimized) */}
+            <div className="pt-1 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={addRow}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  addRow();
+                }}
+                className="flex-1 h-11 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs touch-manipulation active:scale-[0.99]"
+              >
+                <Plus className="w-4 h-4 pointer-events-none" />
+                <span className="pointer-events-none font-semibold">+ Add Another Lot / Row</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRowCount(rows.length + 3)}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  setRowCount(rows.length + 3);
+                }}
+                className="h-11 px-4 bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-800 border border-zinc-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer touch-manipulation"
+              >
+                <Plus className="w-3.5 h-3.5 pointer-events-none" />
+                <span className="pointer-events-none">+ Add 3 Rows</span>
+              </button>
+            </div>
           </div>
         </div>
         {/* Live Challan Pre-Save Summary Banner */}
@@ -605,7 +679,11 @@ export default function FabricInwardForm({
         </div>
 
         {/* Hidden payload of rows */}
-        <input type="hidden" name="itemsPayload" value={JSON.stringify(rows)} />
+        <input
+          type="hidden"
+          name="itemsPayload"
+          value={JSON.stringify(activeRows.length > 0 ? activeRows : rows.slice(0, 1))}
+        />
 
         {/* Submit Button */}
         <div className="pt-2">
@@ -626,7 +704,7 @@ export default function FabricInwardForm({
             ) : (
               <>
                 <ArrowDownLeft className={`w-4 h-4 ${!isFormValid ? "text-amber-400" : "text-emerald-400"}`} />
-                <span>Save & Generate Inward Gate Pass ({rows.length} Items)</span>
+                <span>Save & Generate Inward Gate Pass ({activeRows.length > 0 ? activeRows.length : 1} {activeRows.length === 1 || activeRows.length === 0 ? "Lot" : "Lots"})</span>
               </>
             )}
           </button>
