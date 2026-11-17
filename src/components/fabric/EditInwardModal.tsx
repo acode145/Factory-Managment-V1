@@ -240,23 +240,24 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
           </button>
         </div>
 
-        {/* Modal Scrollable Content */}
-        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
-          {state?.message && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2.5 shadow-2xs">
-              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-              <span className="font-semibold">{state.message}</span>
-            </div>
-          )}
+        {/* Modal Form wrapping scrollable content and footer for reliable Safari submission */}
+        <form id="edit-inward-form" action={formAction} className="flex flex-col flex-1 overflow-hidden">
+          {/* Modal Scrollable Content */}
+          <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
+            {state?.message && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2.5 shadow-2xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span className="font-semibold">{state.message}</span>
+              </div>
+            )}
 
-          {state?.error && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2.5 shadow-2xs">
-              <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
-              <span className="font-semibold">{state.error}</span>
-            </div>
-          )}
+            {state?.error && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2.5 shadow-2xs">
+                <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
+                <span className="font-semibold">{state.error}</span>
+              </div>
+            )}
 
-          <form id="edit-inward-form" action={formAction} className="space-y-5">
             <input type="hidden" name="inwardId" value={inward.id} />
             <input type="hidden" name="itemsPayload" value={JSON.stringify(rows)} />
 
@@ -392,7 +393,8 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                             <button
                               type="button"
                               onClick={() => removeRow(row.id)}
-                              className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer"
+                              onMouseDown={(e) => e.preventDefault()}
+                              className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
                               title="Remove item row"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -528,7 +530,8 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                 <button
                   type="button"
                   onClick={addRow}
-                  className="w-full h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-[0.99]"
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="w-full h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-semibold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-[0.99] touch-manipulation"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add Item Row</span>
@@ -608,7 +611,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                 </div>
               </div>
             </div>
-          </form>
 
           {/* Audit History Timeline */}
           {historyList.length > 0 && (
@@ -649,21 +651,20 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
           )}
         </div>
 
-        {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-zinc-100 flex items-center justify-end gap-3 bg-zinc-50/70">
+        {/* Modal Footer (Inside form so Safari triggers submit naturally) */}
+        <div className="px-6 py-4 border-t border-zinc-100 flex items-center justify-end gap-3 bg-zinc-50/70 shrink-0">
           <button
             type="button"
             onClick={onClose}
             disabled={isPending}
-            className="px-4 h-11 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors cursor-pointer"
+            className="px-4 h-11 rounded-xl border border-zinc-300 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors cursor-pointer touch-manipulation"
           >
             Cancel
           </button>
           <button
             type="submit"
-            form="edit-inward-form"
             disabled={isPending}
-            className="px-5 h-11 rounded-xl bg-zinc-950 text-white text-xs font-semibold hover:bg-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50 shadow-xs cursor-pointer"
+            className="px-5 h-11 rounded-xl bg-zinc-950 text-white text-xs font-semibold hover:bg-zinc-800 transition-colors flex items-center gap-2 disabled:opacity-50 shadow-xs cursor-pointer touch-manipulation"
           >
             {isPending ? (
               <>
@@ -678,6 +679,7 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
             )}
           </button>
         </div>
+        </form>
       </div>
     </div>
   );

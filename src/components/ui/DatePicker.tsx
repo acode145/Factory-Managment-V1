@@ -108,6 +108,7 @@ export default function DatePicker({
       <div className="relative flex items-center">
         <input
           type="text"
+          required={required}
           value={displayText}
           onChange={handleTextChange}
           onClick={openCalendar}
@@ -119,8 +120,9 @@ export default function DatePicker({
         <button
           type="button"
           onClick={openCalendar}
+          onMouseDown={(e) => e.preventDefault()}
           disabled={disabled}
-          className="absolute right-2.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-zinc-900 rounded transition-colors"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-zinc-900 rounded transition-colors touch-manipulation cursor-pointer"
           tabIndex={-1}
           aria-label="Open Calendar"
         >
@@ -128,18 +130,20 @@ export default function DatePicker({
         </button>
       </div>
 
-      {/* Hidden Native Picker that handles the calendar popup and form submission */}
+      {/* Hidden input for form submission without Safari focusable validation trap */}
+      <input type="hidden" name={name} value={isoDate} />
+
+      {/* Native Picker that handles the calendar popup dialog */}
       <input
         ref={hiddenInputRef}
         type="date"
-        name={name}
-        required={required}
         value={isoDate}
         onChange={(e) => handleIsoChange(e.target.value)}
         disabled={disabled}
         tabIndex={-1}
+        aria-hidden="true"
         className="sr-only"
-        style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }}
+        style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 1, height: 1, bottom: 0, left: 0 }}
       />
     </div>
   );

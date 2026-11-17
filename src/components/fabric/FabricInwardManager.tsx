@@ -44,7 +44,7 @@ export default function FabricInwardManager({ parties, inwardList }: FabricInwar
           <button
             type="button"
             onClick={() => setView("form")}
-            className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
               view === "form"
                 ? "bg-white text-zinc-950 shadow-xs"
                 : "text-zinc-600 hover:text-zinc-950"
@@ -57,7 +57,7 @@ export default function FabricInwardManager({ parties, inwardList }: FabricInwar
           <button
             type="button"
             onClick={() => setView("directory")}
-            className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
               view === "directory"
                 ? "bg-white text-zinc-950 shadow-xs"
                 : "text-zinc-600 hover:text-zinc-950"

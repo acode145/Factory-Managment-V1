@@ -138,17 +138,17 @@ export default function LoginPage() {
               </button>
               <button
                 type="button"
-                onClick={() => handleQuickFill("amir", "123456")}
+                onClick={() => handleQuickFill("karam", "123123")}
                 className="py-1.5 px-2 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded text-center text-xs text-zinc-700 font-mono transition-colors"
               >
-                amir (123456)
+                karam (123123)
               </button>
               <button
                 type="button"
-                onClick={() => handleQuickFill("tariq", "654321")}
+                onClick={() => handleQuickFill("imran", "321321")}
                 className="py-1.5 px-2 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded text-center text-xs text-zinc-700 font-mono transition-colors"
               >
-                tariq (654321)
+                imran (321321)
               </button>
             </div>
           </div>

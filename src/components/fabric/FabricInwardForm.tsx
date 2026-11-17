@@ -170,6 +170,22 @@ export default function FabricInwardForm({
       );
     });
 
+  // Identify specific invalid row for clear user feedback
+  const invalidRowInfo = (() => {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r.fabricType.trim()) return `Row ${i + 1}: Enter fabric construction (e.g. Lawn 68/68)`;
+      if (!r.colorShade.trim()) return `Row ${i + 1}: Enter color or shade`;
+      const rolls = parseInt(r.rollCount, 10);
+      if (isNaN(rolls) || rolls <= 0) return `Row ${i + 1}: Pack count must be at least 1`;
+      const cQty = parseFloat(r.challanQty);
+      if (isNaN(cQty) || cQty <= 0) return `Row ${i + 1}: Enter claimed quantity (> 0)`;
+      const mQty = parseFloat(r.measuredQty);
+      if (isNaN(mQty) || mQty <= 0) return `Row ${i + 1}: Enter measured quantity (> 0)`;
+    }
+    return null;
+  })();
+
   const isFormValid =
     Boolean(selectedPartyId) &&
     Boolean(partyChallanNo.trim()) &&
@@ -371,7 +387,8 @@ export default function FabricInwardForm({
                         <button
                           type="button"
                           onClick={() => removeRow(row.id)}
-                          className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer"
+                          onMouseDown={(e) => e.preventDefault()}
+                          className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
                           title="Remove item row"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -507,7 +524,8 @@ export default function FabricInwardForm({
             <button
               type="button"
               onClick={addRow}
-              className="w-full h-11 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs mt-2"
+              onMouseDown={(e) => e.preventDefault()}
+              className="w-full h-11 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs mt-2 touch-manipulation active:scale-[0.99]"
             >
               <Plus className="w-4 h-4" />
               <span>Add Item Row</span>
@@ -583,10 +601,10 @@ export default function FabricInwardForm({
           <button
             type="submit"
             disabled={!isFormValid || isPending}
-            className={`w-full h-12 rounded-lg text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-2 ${
+            className={`w-full h-12 rounded-lg text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-2 touch-manipulation ${
               !isFormValid || isPending
                 ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
-                : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer"
+                : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer active:scale-[0.99]"
             }`}
           >
             {isPending ? (
@@ -602,15 +620,19 @@ export default function FabricInwardForm({
             )}
           </button>
           {!isFormValid && (
-            <p className="text-[11px] text-zinc-500 text-center mt-1.5 font-mono">
-              {!selectedPartyId
-                ? "Select Client Party / Mill to proceed"
-                : !partyChallanNo.trim()
-                ? "Enter Party Challan / Bilty # to proceed"
-                : isDuplicateChallan
-                ? `Challan #${partyChallanNo.trim()} is already registered for this party`
-                : "Fill fabric specification, color shade, roll count, and quantities in all item rows"}
-            </p>
+            <div className="text-[11px] text-zinc-600 text-center mt-2 font-mono bg-zinc-50 border border-zinc-200/80 rounded-lg py-1.5 px-3">
+              {!selectedPartyId ? (
+                <span>⚠️ Select Client Party / Mill to proceed</span>
+              ) : !partyChallanNo.trim() ? (
+                <span>⚠️ Enter Party Challan / Bilty # to proceed</span>
+              ) : isDuplicateChallan ? (
+                <span className="text-rose-600">❌ Challan #{partyChallanNo.trim()} is already registered for this party</span>
+              ) : invalidRowInfo ? (
+                <span className="text-amber-800 font-semibold">⚠️ {invalidRowInfo}</span>
+              ) : (
+                <span>Fill fabric specification, color shade, roll count, and quantities in all item rows</span>
+              )}
+            </div>
           )}
         </div>
       </form>
