@@ -52,6 +52,7 @@ export default function FabricInwardForm({
   const [formKey, setFormKey] = useState(0);
   const [selectedPartyId, setSelectedPartyId] = useState("");
   const [partyChallanNo, setPartyChallanNo] = useState("");
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   useEffect(() => {
     if (state?.success) {
@@ -221,7 +222,19 @@ export default function FabricInwardForm({
         </div>
       )}
 
-      <form key={formKey} action={formAction} className="space-y-6">
+      <form
+        key={formKey}
+        action={formAction}
+        onSubmit={(e) => {
+          if (!isFormValid) {
+            e.preventDefault();
+            setSubmitAttempted(true);
+          } else {
+            setSubmitAttempted(false);
+          }
+        }}
+        className="space-y-6"
+      >
         {/* Top Header Card: Date first, then Party, then Challan #, then Merged Remarks */}
         <div className="p-4 rounded-xl bg-zinc-50/70 border border-zinc-200 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
@@ -387,7 +400,6 @@ export default function FabricInwardForm({
                         <button
                           type="button"
                           onClick={() => removeRow(row.id)}
-                          onMouseDown={(e) => e.preventDefault()}
                           className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
                           title="Remove item row"
                         >
@@ -524,7 +536,6 @@ export default function FabricInwardForm({
             <button
               type="button"
               onClick={addRow}
-              onMouseDown={(e) => e.preventDefault()}
               className="w-full h-11 bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs mt-2 touch-manipulation active:scale-[0.99]"
             >
               <Plus className="w-4 h-4" />
@@ -600,12 +611,12 @@ export default function FabricInwardForm({
         <div className="pt-2">
           <button
             type="submit"
-            disabled={!isFormValid || isPending}
-            className={`w-full h-12 rounded-lg text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-2 touch-manipulation ${
-              !isFormValid || isPending
-                ? "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-300"
-                : "bg-zinc-950 hover:bg-zinc-800 text-white cursor-pointer active:scale-[0.99]"
-            }`}
+            disabled={isPending}
+            className={`w-full h-12 rounded-lg text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-2 touch-manipulation cursor-pointer active:scale-[0.99] ${
+              !isFormValid
+                ? "bg-zinc-800 hover:bg-zinc-900 text-white"
+                : "bg-zinc-950 hover:bg-zinc-800 text-white"
+            } disabled:opacity-50`}
           >
             {isPending ? (
               <span className="flex items-center gap-2">
@@ -614,21 +625,25 @@ export default function FabricInwardForm({
               </span>
             ) : (
               <>
-                <ArrowDownLeft className={`w-4 h-4 ${!isFormValid ? "text-zinc-400" : "text-emerald-400"}`} />
+                <ArrowDownLeft className={`w-4 h-4 ${!isFormValid ? "text-amber-400" : "text-emerald-400"}`} />
                 <span>Save & Generate Inward Gate Pass ({rows.length} Items)</span>
               </>
             )}
           </button>
-          {!isFormValid && (
-            <div className="text-[11px] text-zinc-600 text-center mt-2 font-mono bg-zinc-50 border border-zinc-200/80 rounded-lg py-1.5 px-3">
+          {(!isFormValid || submitAttempted) && (
+            <div className={`text-[11px] text-center mt-2 font-mono rounded-lg py-2 px-3 border transition-all ${
+              submitAttempted && !isFormValid
+                ? "bg-rose-50 border-rose-300 text-rose-800 font-semibold"
+                : "bg-zinc-50 border-zinc-200 text-zinc-600"
+            }`}>
               {!selectedPartyId ? (
                 <span>⚠️ Select Client Party / Mill to proceed</span>
               ) : !partyChallanNo.trim() ? (
                 <span>⚠️ Enter Party Challan / Bilty # to proceed</span>
               ) : isDuplicateChallan ? (
-                <span className="text-rose-600">❌ Challan #{partyChallanNo.trim()} is already registered for this party</span>
+                <span className="text-rose-600 font-bold">❌ Challan #{partyChallanNo.trim()} is already registered for this party</span>
               ) : invalidRowInfo ? (
-                <span className="text-amber-800 font-semibold">⚠️ {invalidRowInfo}</span>
+                <span className="text-rose-700 font-bold">⚠️ {invalidRowInfo}</span>
               ) : (
                 <span>Fill fabric specification, color shade, roll count, and quantities in all item rows</span>
               )}

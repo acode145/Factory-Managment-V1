@@ -392,7 +392,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                             <button
                               type="button"
                               onClick={() => removeRow(row.id)}
-                              onMouseDown={(e) => e.preventDefault()}
                               className="w-7 h-7 rounded-md text-zinc-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
                               title="Remove item row"
                             >
@@ -529,7 +528,6 @@ export default function EditInwardModal({ inward, onClose, onSuccess }: EditInwa
                 <button
                   type="button"
                   onClick={addRow}
-                  onMouseDown={(e) => e.preventDefault()}
                   className="w-full h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-black text-white font-semibold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-[0.99] touch-manipulation"
                 >
                   <Plus className="w-4 h-4" />
