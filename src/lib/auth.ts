@@ -1,5 +1,30 @@
 import { cookies } from "next/headers";
 import crypto from "crypto";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+
+const LoginSchema = z.object({
+  username: z.string().trim().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
+export async function signInWithPassword(formData: FormData) {
+  const parsed = LoginSchema.safeParse({
+    username: formData.get("username"),
+    password: formData.get("password"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const { username, password } = parsed.data;
+  const user = await prisma.user.findUnique({
+    where: { username: username.toLowerCase() },
+  });
+  if (!user?.isActive) return { error: "Invalid username or inactive account" };
+  if (user.password !== password) return { error: "Incorrect password or PIN" };
+
+  await createSession(user);
+  return { role: user.role };
+}
 
 const SESSION_COOKIE_NAME = "fm_session_token";
 const SECRET_KEY = process.env.SESSION_SECRET || "fallback-factory-management-secret-key-2026";
@@ -60,7 +85,9 @@ export async function getSession(): Promise<SessionData | null> {
   const [payload, signature] = parts;
   const expectedSignature = signPayload(payload);
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+  if (signature.length !== expectedSignature.length ||
+      !/^[a-f0-9]+$/.test(signature) ||
+      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
     return null;
   }
 

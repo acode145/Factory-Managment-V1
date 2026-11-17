@@ -367,6 +367,7 @@ export async function createPartyInwardAction(
 
     return {
       success: true,
+      data: { igpNumber },
       message: `Inward Gate Pass ${igpNumber} generated successfully with ${itemsToCreate.length} item lot${
         itemsToCreate.length > 1 ? "s" : ""
       }. Party ledger updated.`,

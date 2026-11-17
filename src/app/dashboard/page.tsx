@@ -364,6 +364,9 @@ export default async function DashboardPage({
                 Inward gate verification, outsource dyeing tracking, and dual-table running statements.
               </p>
             </div>
+            <Link href="/legacy/inward" prefetch={false} className="text-sm font-medium text-zinc-700 underline">
+              Inward receipts for older iPads
+            </Link>
           </div>
 
           {/* Quick Metrics Cards (Stacked on Mobile, 4-col on Desktop) */}
